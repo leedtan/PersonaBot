@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str, required=True, help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, required=True, help='output directory')
 parser.add_argument('--traintestsplit', type=float, default=0.8, help='train test split (default 0.8)')
-parser.add_argument('--wordunknownedthreshold', type=int, default=3, help='train test split (default 0.8)')
+parser.add_argument('--wordunknownedthreshold', type=int, default=5, help='train test split (default 0.8)')
 args = parser.parse_args()
 import pickle
 
