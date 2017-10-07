@@ -47,9 +47,9 @@ class DictionaryLearner(object):
 
 class Corpus(object):
     def __init__(self, path, list_dir):
-        self.train_file = h5py.File('dataset_train.h5', 'w')
-        self.val_file = h5py.File('dataset_val.h5', 'w')
-        self.test_file = h5py.File('dataset_test.h5', 'w')
+        self.train_file = h5py.File(args.outputdir + 'dataset_train.h5', 'w')
+        self.val_file = h5py.File(args.outputdir + 'dataset_val.h5', 'w')
+        self.test_file = h5py.File(args.outputdir + 'dataset_test.h5', 'w')
         self.dicLearner = DictionaryLearner()
         self.userbank = DictionaryLearner()
         train_test_split = int(round(len(list_dir) * args.traintestsplit))
@@ -66,8 +66,8 @@ class Corpus(object):
         self.train = self.tokenize(path,train_set, self.train_file)
         self.valid = self.tokenize(path,val_set, self.val_file)
         self.test = self.tokenize(path,test_set, self.test_file)
-        pickle.dump([self.word2idx, self.idx2word], open( "word_dicts.p", "w" ))
-        pickle.dump([self.user2idx, self.idx2user], open( "user_dicts.p", "w" ))
+        pickle.dump([self.word2idx, self.idx2word], open(args.outputdir +  "word_dicts.p", "w" ))
+        pickle.dump([self.user2idx, self.idx2user], open(args.outputdir +  "user_dicts.p", "w" ))
     
     def get_word_mapping(self, freq_words):
         word2idx = {}
