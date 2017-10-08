@@ -118,7 +118,7 @@ class Corpus(object):
                         try:
                             data, user, text = re.split(r'\t+', line)
                         except:
-                            wtf = 1
+                            continue
                         processed_text = []
                         for word in text:
                             if word in self.words:
@@ -130,10 +130,13 @@ class Corpus(object):
                         else:
                             usr = -1
                         conversation.append(np.concatenate([np.expand_dims(np.array(usr),1), np.array(processed_text)]))
+                    if len(conversation) < 5:
+                        continue
                     maxlen = max([len(l) for l in conversation])
-                    Z = np.zeros((len(conversation), maxlen))
+                    Z = np.zeros((len(conversation), maxlen+1))
                     for idx, row in enumerate(conversation):
                         Z[idx, :len(row)] = row
+                        Z[idx,-1] = len(row)
                     file[str(file_idx)] = Z
                     file_idx += 1
         return
