@@ -54,9 +54,9 @@ class Corpus(object):
         self.userbank = DictionaryLearner()
         train_test_split = int(round(len(list_dir) * args.traintestsplit))
         
-        train_set = list_dir[:train_test_split]
-        val_set = list_dir[train_test_split:-2]
-        test_set = list_dir[-2:]
+        train_set = list_dir[:4]
+        val_set = list_dir[4:6]
+        test_set = list_dir[-4:]
         self.frequent_words, self.frequent_users = self.learnDictionnary(path, train_set)
         
         self.word2idx, self.idx2word = self.get_word_mapping(self.frequent_words)
@@ -114,6 +114,7 @@ class Corpus(object):
             for fname in os.listdir(path):
                 with open(path + fname, 'r') as f:
                     conversation = []
+                    conv_users = set()
                     for line in f:
                         try:
                             data, user, text = re.split(r'\t+', line)
@@ -130,7 +131,8 @@ class Corpus(object):
                         else:
                             usr = -1
                         conversation.append(np.concatenate([np.expand_dims(np.array(usr),1), np.array(processed_text)]))
-                    if len(conversation) < 5:
+                        conv_users.add(usr)
+                    if len(conversation) < 5 or len(conv_users) < 2:
                         continue
                     maxlen = max([len(l) for l in conversation])
                     Z = np.zeros((len(conversation), maxlen+1))
@@ -141,16 +143,6 @@ class Corpus(object):
                     file_idx += 1
         return
 a = Corpus(args.dataroot, os.listdir(args.dataroot))
-
-
-
-
-
-
-
-
-
-
 
 
 
