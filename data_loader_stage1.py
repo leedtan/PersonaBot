@@ -178,8 +178,15 @@ def collate_as_tensor(samples):
     return turns, sentence_lengths_padded, speaker_padded, addressee_padded, words_padded, words_reverse_padded
 
 class UbuntuDialogDataLoader(DataLoader):
-    def __init__(self, dataset, batch_size=1):
-        DataLoader.__init__(self, dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_as_tensor)
+    def __init__(self, dataset, batch_size=1, num_workers=0):
+        DataLoader.__init__(self,
+                            dataset,
+                            batch_size=batch_size,
+                            shuffle=True,
+                            collate_fn=collate_as_tensor,
+                            num_workers=num_workers,
+                            drop_last=True,
+                            )
 
 # Usage:
 # dataset = UbuntuDialogDataset('../ubuntu-ranking-dataset-creator/src/dialogs', 'wordcount.pkl', 'usercount.pkl')
@@ -188,4 +195,6 @@ class UbuntuDialogDataLoader(DataLoader):
 #     turns, sentence_lengths_padded, speaker_padded, addressee_padded, words_padded, words_reverse_padded = item
 #     ...
 #
-# wordcount.pkl and usercount.pkl are generated from stage1 parser
+# wordcount.pkl and usercount.pkl are generated from stage1 parser.
+# If you want asynchronous data loading, use something like
+# dataloader = UbuntuDialogDataLoader(dataset, 16, 4)
