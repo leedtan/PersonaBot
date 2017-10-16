@@ -114,6 +114,22 @@ class UbuntuDialogDataset(Dataset):
     def unknown_user_index(self):
         return len(self._users)
 
+    @property
+    def vocab(self):
+        '''
+        The vocabulary
+        First word is padding; the real vocabulary starts from index 1
+        '''
+        return self._vocab
+
+    @property
+    def users(self):
+        '''
+        The users
+        First user is null; the real list of users starts from index 1
+        '''
+        return self._users
+
     def get_word(self, i):
         if 0 <= i < len(self._vocab):       # padding already in self._vocab
             return self._vocab[i]
