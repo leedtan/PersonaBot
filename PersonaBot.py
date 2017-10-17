@@ -22,7 +22,7 @@ import numpy as np
 def_size = 64
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
-parser.add_argument('--dataroot', type=str, required=True, help='Root of the data downloaded from github')
+parser.add_argument('--dataroot', type=str,required=True, help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',required=True, help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
@@ -47,7 +47,10 @@ val_file = h5py.File(args.outputdir + 'dataset_val.h5', 'r')
 test_file = h5py.File(args.outputdir + 'dataset_test.h5', 'r')
 word2idx, idx2word = pickle.load(open(args.outputdir +  "word_dicts.p", "r" ))
 user2idx, idx2user = pickle.load(open(args.outputdir +  "user_dicts.p", "r" ))
-
+try:
+    os.mkdir(args.logdir)
+except:
+    pass
 
 if len(args.modelname) > 0:
     modelnamesave = args.modelname
