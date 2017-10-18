@@ -284,7 +284,7 @@ class Decoder(NN.Module):
         num_layers = 1 #NOT ALLOWED TO CHANGE NUM LAYERS
         self._num_layers = num_layers
         if state_size == None:
-            state_size = size_usr + size_wd
+            state_size = size_usr + size_wd + context_size
         self._state_size = state_size
 
         self.rnn = NN.LSTM(
@@ -308,11 +308,12 @@ class Decoder(NN.Module):
         context_size = self._context_size
         size_wd = self._size_wd
         size_usr = self._size_usr
+        state_size = self._state_size
         
         
-        lstm_h = [tovar(T.zeros(batch_size * maxlenbatch, context_size + size_wd + size_usr))
+        lstm_h = [tovar(T.zeros(batch_size * maxlenbatch, state_size))
             for _ in range(num_layers)]
-        lstm_c = [tovar(T.zeros(batch_size * maxlenbatch, context_size + size_wd + size_usr))
+        lstm_c = [tovar(T.zeros(batch_size * maxlenbatch, state_size))
             for _ in range(num_layers)]
         initial_state = [lstm_h, lstm_c]
         #batch, turns in a sample, words in a message, embedding_dim
@@ -320,6 +321,9 @@ class Decoder(NN.Module):
         usr_emb = usr_emb.unsqueeze(2)
         usr_emb = usr_emb.expand(batch_size,maxlenbatch,maxwordsmessage,
                                  usr_emb.size()[-1])
+        #length = length.unsqueeze(2)
+        #length = length.expand(batch_size,maxlenbatch,maxwordsmessage,
+        #                         length.size()[-1])
         context_encodings = context_encodings.unsqueeze(1).unsqueeze(2)
         context_encodings = context_encodings.expand(
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
@@ -329,12 +333,12 @@ class Decoder(NN.Module):
         embed_seq = embed_seq.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(
                 self.rnn, embed_seq, length.view(-1), initial_state)
-        
+        h = h.permute(1, 0, 2)
         h = h[:, -1,:]
-        
-        out = self.proj(h)
+        out = self.proj(embed.contiguous().view(-1, state_size))
         out = self.softmax(out)
-        return out.contiguous().view(batch_size, context_size)
+        out = out.view(batch_size, maxlenbatch, maxwordsmessage, -1)
+        return out#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
 
 
 
@@ -364,7 +368,7 @@ context = Context(size_sentence, size_context, num_layers = 1)
 decoder = Decoder(size_usr, size_wd, size_context, num_words)
 
 
-dataloader = UbuntuDialogDataLoader(dataset, 16)
+dataloader = UbuntuDialogDataLoader(dataset, 2)
 
 for item in dataloader:
     turns, sentence_lengths_padded, speaker_padded, \
