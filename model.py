@@ -261,15 +261,80 @@ class Context(NN.Module):
         num_layers = self._num_layers
         batch_size = sent_encodings.size()[0]
         context_size = self._context_size
-        initial_state = (
-                tovar(T.zeros(num_layers * 2, batch_size, context_size // 2)),
-                tovar(T.zeros(num_layers * 2, batch_size, context_size // 2)),
-                )
+        
+        lstm_h = [tovar(T.zeros(batch_size, context_size)) for _ in range(num_layers)]
+        lstm_c = [tovar(T.zeros(batch_size, context_size)) for _ in range(num_layers)]
+        initial_state = [lstm_h, lstm_c]
+        sent_encodings = sent_encodings.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
         
-        #Not sure what to return here
         h = h.permute(1, 0, 2)
-        return h[:, -2:].contiguous().view(batch_size, output_size)
+        return h[:, -1,:].contiguous().view(batch_size, context_size)
+
+
+
+class Decoder(NN.Module):
+    def __init__(self,size_usr, size_wd, context_size, num_words, 
+                 state_size = None, num_layers=1):
+        NN.Module.__init__(self)
+        self._num_words = num_words
+        self._context_size = context_size
+        self._size_wd = size_wd
+        self._size_usr = size_usr
+        num_layers = 1 #NOT ALLOWED TO CHANGE NUM LAYERS
+        self._num_layers = num_layers
+        if state_size == None:
+            state_size = size_usr + size_wd
+        self._state_size = state_size
+
+        self.rnn = NN.LSTM(
+                size_wd + size_usr + context_size,
+                state_size,
+                num_layers,
+                bidirectional=False,
+                )
+        self.proj = NN.Sequential(
+                NN.Linear(state_size, num_words),
+                )
+        self.softmax = NN.Softmax()
+        init_weights(self.proj)
+        init_lstm(self.rnn)
+
+    def forward(self, context_encodings, wd_emb, usr_emb, length):
+        num_layers = self._num_layers
+        batch_size = context_encodings.size()[0]
+        maxlenbatch = wd_emb.size()[1]
+        maxwordsmessage = wd_emb.size()[2]
+        context_size = self._context_size
+        size_wd = self._size_wd
+        size_usr = self._size_usr
+        
+        
+        lstm_h = [tovar(T.zeros(batch_size * maxlenbatch, context_size + size_wd + size_usr))
+            for _ in range(num_layers)]
+        lstm_c = [tovar(T.zeros(batch_size * maxlenbatch, context_size + size_wd + size_usr))
+            for _ in range(num_layers)]
+        initial_state = [lstm_h, lstm_c]
+        #batch, turns in a sample, words in a message, embedding_dim
+        
+        usr_emb = usr_emb.unsqueeze(2)
+        usr_emb = usr_emb.expand(batch_size,maxlenbatch,maxwordsmessage,
+                                 usr_emb.size()[-1])
+        context_encodings = context_encodings.unsqueeze(1).unsqueeze(2)
+        context_encodings = context_encodings.expand(
+                batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
+        
+        embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
+        embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
+        embed_seq = embed_seq.permute(1,0,2)
+        embed, (h, c) = dynamic_rnn(
+                self.rnn, embed_seq, length.view(-1), initial_state)
+        
+        h = h[:, -1,:]
+        
+        out = self.proj(h)
+        out = self.softmax(out)
+        return out.contiguous().view(batch_size, context_size)
 
 
 
@@ -286,6 +351,7 @@ vcb = dataset.vocab
 usrs = dataset.users
 num_usrs = len(usrs)
 vcb_len = len(vcb)
+num_words = vcb_len
 size_usr = 12
 size_wd = 14
 size_sentence = 18
@@ -295,6 +361,7 @@ user_emb = NN.Embedding(num_usrs+1, size_usr, padding_idx = 0)
 word_emb = NN.Embedding(vcb_len+1, size_wd, padding_idx = 0)
 enc = Encoder(size_usr, size_wd, size_sentence, num_layers = 1)
 context = Context(size_sentence, size_context, num_layers = 1)
+decoder = Decoder(size_usr, size_wd, size_context, num_words)
 
 
 dataloader = UbuntuDialogDataLoader(dataset, 16)
@@ -317,11 +384,12 @@ for item in dataloader:
     
     max_turns = turns.max()
     max_words = wds_b.size()[2]
-    
-    encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd), 
-                    usrs_b.view(batch_size * max_turns, size_usr), 
-                    sentence_lengths_padded.view(-1))
-    a = 2
+    encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
+                usrs_b.view(batch_size * max_turns, size_usr), 
+                sentence_lengths_padded.view(-1))
+    encodings = encodings.view(batch_size, max_turns, -1)
+    ctx = context(encodings, turns)
+    decoded = decoder(ctx, wds_b, usrs_b, sentence_lengths_padded)
 
 
 
