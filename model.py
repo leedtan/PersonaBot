@@ -81,6 +81,7 @@ def length_mask(size, length):
 
 
 def dynamic_rnn(rnn, seq, length, initial_state):
+    length[length==0] = 1
     length_sorted, length_sorted_idx = T.sort(length, 0, descending=True)
     _, length_inverse_idx = T.sort(length_sorted_idx)
     rnn_in = pack_padded_sequence(
@@ -235,7 +236,7 @@ class Encoder(NN.Module):
                 tovar(T.zeros(num_layers * 2, batch_size, output_size // 2)),
                 tovar(T.zeros(num_layers * 2, batch_size, output_size // 2)),
                 )
-        #embed_seq: 160,93,26 length: 160,output_size: 18, init[0]: 2,160,9
+        #embed_seq: 93,160,26 length: 160,output_size: 18, init[0]: 2,160,9
         embed_seq = embed_seq.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, embed_seq, length, initial_state)
         h = h.permute(1, 0, 2)
@@ -306,6 +307,7 @@ for item in dataloader:
     speaker_padded = T.autograd.Variable(speaker_padded)
     addressee_padded = T.autograd.Variable(addressee_padded)
     
+    batch_size = turns.size()[0]
     #batch, turns in a sample, words in a message, embedding_dim
     wds_b = T.stack([word_emb(words_padded[i,:,:]) for i in range(batch_size)])
     wds_rev_b = T.stack([word_emb(words_reverse_padded[i,:,:]) for i in range(batch_size)])
@@ -313,7 +315,6 @@ for item in dataloader:
     usrs_b = user_emb(speaker_padded)
     addres_b = user_emb(addressee_padded)
     
-    batch_size = turns.size()[0]
     max_turns = turns.max()
     max_words = wds_b.size()[2]
     
@@ -321,6 +322,9 @@ for item in dataloader:
                     usrs_b.view(batch_size * max_turns, size_usr), 
                     sentence_lengths_padded.view(-1))
     a = 2
+
+
+
 
 # Usage:
 # dataset = UbuntuDialogDataset('../ubuntu-ranking-dataset-creator/src/dialogs', 'wordcount.pkl', 'usercount.pkl')
