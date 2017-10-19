@@ -164,7 +164,7 @@ class Decoder(NN.Module):
         h = h[:, -1,:]
         out = self.proj(embed.contiguous().view(-1, state_size))
         out = self.softmax(out)
-        out = out.view(batch_size, maxlenbatch, maxwordsmessage, -1)
+        out = out.view(batch_size, maxlenbatch, -1, self._num_words)
         return out#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
 
 
@@ -217,8 +217,9 @@ for item in dataloader:
     ctx = context(encodings, turns)
     decoded = decoder(ctx[:,:-1:], wds_b[:,1:,:],
                       usrs_b[:,1:,], sentence_lengths_padded[:,1:])
-    decoded_flat = decoded.view(batch_size * max_turns * max_words, -1)
-    words_flat = words_padded.view(-1)
+    max_words = decoded.size()[2]
+    decoded_flat = decoded.view(batch_size * (max_turns-1) * max_words, -1)
+    words_flat = words_padded[:,1:,:max_words].contiguous().view(-1)
     perplex = decoded_flat.gather(1, words_flat.view(-1, 1))
     print(perplex)
     break
