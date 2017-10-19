@@ -128,7 +128,7 @@ class Decoder(NN.Module):
 
     def forward(self, context_encodings, wd_emb, usr_emb, length):
         num_layers = self._num_layers
-        batch_size = context_encodings.size()[0]
+        batch_size = wd_emb.size()[0]
         maxlenbatch = wd_emb.size()[1]
         maxwordsmessage = wd_emb.size()[2]
         context_size = self._context_size
@@ -150,15 +150,16 @@ class Decoder(NN.Module):
         #length = length.unsqueeze(2)
         #length = length.expand(batch_size,maxlenbatch,maxwordsmessage,
         #                         length.size()[-1])
-        context_encodings = context_encodings.unsqueeze(1).unsqueeze(2)
+        context_encodings = context_encodings.unsqueeze(2)
         context_encodings = context_encodings.expand(
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
         
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
-        embed_seq = embed_seq.permute(1,0,2)
+        embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
-                self.rnn, embed_seq, length.view(-1), initial_state)
+                self.rnn, embed_seq, length.contiguous().view(-1),
+                initial_state)
         h = h.permute(1, 0, 2)
         h = h[:, -1,:]
         out = self.proj(embed.contiguous().view(-1, state_size))
@@ -214,7 +215,8 @@ for item in dataloader:
                 sentence_lengths_padded.view(-1))
     encodings = encodings.view(batch_size, max_turns, -1)
     ctx = context(encodings, turns)
-    decoded = decoder(ctx, wds_b, usrs_b, sentence_lengths_padded)
+    decoded = decoder(ctx[:,:-1:], wds_b[:,1:,:],
+                      usrs_b[:,1:,], sentence_lengths_padded[:,1:])
     decoded_flat = decoded.view(batch_size * max_turns * max_words, -1)
     words_flat = words_padded.view(-1)
     perplex = decoded_flat.gather(1, words_flat.view(-1, 1))
