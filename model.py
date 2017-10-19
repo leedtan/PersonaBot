@@ -267,9 +267,9 @@ class Context(NN.Module):
         initial_state = [lstm_h, lstm_c]
         sent_encodings = sent_encodings.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
-        
-        h = h.permute(1, 0, 2)
-        return h[:, -1,:].contiguous().view(batch_size, context_size)
+        embed = embed.contiguous().view(-1, context_size)
+        #h = h.permute(1, 0, 2)
+        return embed.view(batch_size, -1, context_size)
 
 
 
