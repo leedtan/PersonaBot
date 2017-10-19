@@ -6,6 +6,8 @@ import os
 import numpy as np
 from collections import Counter
 
+EOS = '<eos>'
+
 class UbuntuDialogDataset(Dataset):
     def __init__(self,
                  root='.',
@@ -47,6 +49,8 @@ class UbuntuDialogDataset(Dataset):
         else:
             self._vocab = [''] + [w for w, c in self._wordcount.items() if c >= min_word_occurrence]
 
+        self._vocab.append(EOS)
+
         if not min_user_occurrence:
             self._users = [''] + list(list(zip(*self._usercount.most_common(user_size)))[0])
         else:
@@ -78,7 +82,10 @@ class UbuntuDialogDataset(Dataset):
         Gets a dialogue with words/users as strings
         '''
         with open(self._pkls[i], 'rb') as f:
-            return pickle.load(f)
+            item = pickle.load(f)
+            for sentence in item['words']:
+                sentence.append(EOS)
+            return item
 
     def get_indexed_item(self, i):
         '''
