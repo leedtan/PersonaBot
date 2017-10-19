@@ -365,7 +365,7 @@ user_emb = NN.Embedding(num_usrs+1, size_usr, padding_idx = 0)
 word_emb = NN.Embedding(vcb_len+1, size_wd, padding_idx = 0)
 enc = Encoder(size_usr, size_wd, size_sentence, num_layers = 1)
 context = Context(size_sentence, size_context, num_layers = 1)
-decoder = Decoder(size_usr, size_wd, size_context, num_words)
+decoder = Decoder(size_usr, size_wd, size_context, num_words+1)
 
 
 dataloader = UbuntuDialogDataLoader(dataset, 2)
@@ -394,7 +394,11 @@ for item in dataloader:
     encodings = encodings.view(batch_size, max_turns, -1)
     ctx = context(encodings, turns)
     decoded = decoder(ctx, wds_b, usrs_b, sentence_lengths_padded)
-
+    decoded_flat = decoded.view(batch_size * max_turns * max_words, -1)
+    words_flat = words_padded.view(-1)
+    perplex = decoded_flat.gather(1, words_flat.view(-1, 1))
+    print(perplex)
+    break
 
 
 
