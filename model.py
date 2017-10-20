@@ -6,6 +6,7 @@ import torch as T
 import torch.nn as NN
 import torch.nn.functional as F
 import torch.nn.init as INIT
+import tensorflow as TF
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 import numpy.random as RNG
@@ -181,34 +182,86 @@ class Decoder(NN.Module):
             return out, log_prob
 
 
+parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
+parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
+parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
+parser.add_argument('--logdir', type=str, default='logs', help='log directory')
+parser.add_argument('--encoder_layers', type=int, default=1)
+parser.add_argument('--decoder_layers', type=int, default=1)
+parser.add_argument('--size_context', type=int, default=12)
+parser.add_argument('--size_sentence', type=int, default=6)
+parser.add_argument('--decoder_size_sentence', type=int, default=4)
+parser.add_argument('--size_usr', type=int, default=10)
+parser.add_argument('--size_wd', type=int, default=8)
+parser.add_argument('--batchsize', type=int, default=32)
+parser.add_argument('--gradclip', type=float, default=1)
+parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--modelname', type=str, default = '')
+parser.add_argument('--modelnamesave', type=str, default='')
+parser.add_argument('--modelnameload', type=str, default='')
+parser.add_argument('--loaditerations', type=int, default=0)
+args = parser.parse_args()
 
 dataset = UbuntuDialogDataset(
         'ubuntu', 
         'wordcount.pkl', 'usercount.pkl')
+try:
+    os.mkdir(args.logdir)
+except:
+    pass
+
+if len(args.modelname) > 0:
+    modelnamesave = args.modelname
+    modelnameload = None
+else:
+    modelnamesave = args.modelnamesave
+    modelnameload = args.modelnameload
+
+
+def logdirs(logdir, modelnamesave):
+    if not os.path.exists(logdir):
+        os.mkdir(logdir)
+    logdir = (
+            logdir + '/%s-%s' % 
+            (modelnamesave, datetime.datetime.strftime(
+                datetime.datetime.now(), '%Y%m%d%H%M%S')
+                )
+            )
+    if not os.path.exists(logdir):
+        os.mkdir(logdir)
+    elif not os.path.isdir(logdir):
+        raise IOError('%s is not a directory' % logdir)
+    return logdir
+log_train_d = logdirs(args.logdir, modelnamesave)
 
 vcb = dataset.vocab
 usrs = dataset.users
 num_usrs = len(usrs)
 vcb_len = len(vcb)
 num_words = vcb_len
-size_usr = 50
-size_wd = 50
-size_sentence = 300
-size_context = 300
+size_usr = args.size_usr
+size_wd = args.size_wd
+size_sentence = args.size_sentence
+size_context = args.size_context
+decoder_size_sentence = args.size_sentence
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = 1))
 context = cuda(Context(size_sentence, size_context, num_layers = 1))
-decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1))
+decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
+                       decoder_size_sentence))
 
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
-opt = T.optim.Adam(params, lr=1e-4)
+opt = T.optim.Adam(params, lr=args.lr)
 
 
 dataloader = UbuntuDialogDataLoader(dataset, 1, num_workers=1)
 
+itr = args.loaditerations
+
 for item in dataloader:
+    itr += 1
     turns, sentence_lengths_padded, speaker_padded, \
         addressee_padded, words_padded, words_reverse_padded = item
     words_padded = tovar(words_padded)
@@ -246,6 +299,17 @@ for item in dataloader:
     loss.backward()
     clip_grad(params, 1)
     opt.step()
+    if itr % 1000 == 0:
+        T.save(user_emb, '%s-user_emb-%05d' % (modelnamesave, itr))
+        T.save(word_emb, '%s-word_emb-%05d' % (modelnamesave, itr))
+        T.save(enc, '%s-enc-%05d' % (modelnamesave, itr))
+        T.save(context, '%s-context-%05d' % (modelnamesave, itr))
+        T.save(decoder, '%s-decoder-%05d' % (modelnamesave, itr))
+    print('G', itr, tonumpy(loss))
+
+    
+    
+    
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
     # We need to manually unroll the LSTMs.
     #decoded = decoder(ctx[:, :-1:], wds_b[:, 1:, :], None,
