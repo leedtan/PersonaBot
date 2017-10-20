@@ -232,7 +232,9 @@ def logdirs(logdir, modelnamesave):
     elif not os.path.isdir(logdir):
         raise IOError('%s is not a directory' % logdir)
     return logdir
-log_train_d = logdirs(args.logdir, modelnamesave)
+log_train = logdirs(args.logdir, modelnamesave)
+
+train_writer = TF.summary.FileWriter(log_train)
 
 vcb = dataset.vocab
 usrs = dataset.users
@@ -294,10 +296,21 @@ for item in dataloader:
     prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words], words_flat,
                              usrs_b[:,1:], sentence_lengths_padded[:,1:])
     loss = -log_prob
-    print(tonumpy(loss))
     opt.zero_grad()
     loss.backward()
-    clip_grad(params, 1)
+    grad_norm = clip_grad(params, args.gradclip)
+    loss, grad_norm = tonumpy(loss, grad_norm)
+    loss = loss[0]
+    print(loss)
+    train_writer.add_summary(
+            TF.Summary(
+                value=[
+                    TF.Summary.Value(tag='loss', simple_value=loss),
+                    TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                    ]
+                ),
+            itr
+            )
     opt.step()
     if itr % 1000 == 0:
         T.save(user_emb, '%s-user_emb-%05d' % (modelnamesave, itr))
