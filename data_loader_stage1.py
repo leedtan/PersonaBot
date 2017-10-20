@@ -14,10 +14,14 @@ class UbuntuDialogDataset(Dataset):
                  root='.',
                  wordcount_pkl='wordcount.pkl',
                  usercount_pkl='usercount.pkl',
+                 turncount_pkl='turncount.pkl',
+                 max_sentence_lengths_pkl='max_sentence_lengths.pkl',
                  vocab_size=89996,          # excluding padding, <unknown>, <eos>, <start>
                  user_size=None,
                  min_word_occurrence=None,
                  min_user_occurrence=5,
+                 max_sentence_length_allowed=50,
+                 max_turns_allowed=10,
                  coalesce_types=['path'],
                  ):
         '''
@@ -33,14 +37,22 @@ class UbuntuDialogDataset(Dataset):
         as well.
         '''
         self._pkls = []
-        for curdir, _, files in os.walk(root):
-            pkls = [os.path.join(curdir, f) for f in files if f.endswith('.pkl')]
-            self._pkls.extend(pkls)
-
+        with open(turncount_pkl, 'rb') as f:
+            self._turncount = pickle.load(f)
+        with open(max_sentence_lengths_pkl, 'rb') as f:
+            self._max_sentence_lengths = pickle.load(f)
         with open(wordcount_pkl, 'rb') as f:
             self._wordcount = pickle.load(f)
         with open(usercount_pkl, 'rb') as f:
             self._usercount = pickle.load(f)
+        for curdir in os.listdir(root):
+            files = os.listdir(os.path.join(root, curdir))
+            pkls = [os.path.join(root, curdir, f)
+                    for f in files
+                    if f.endswith('.pkl') and
+                    self._turncount[os.path.join(curdir, f)] <= max_turns_allowed and
+                    self._max_sentence_lengths[os.path.join(curdir, f)] <= max_sentence_length_allowed]
+            self._pkls.extend(pkls)
 
         if coalesce_types is not None:
             self._coalesce(coalesce_types)

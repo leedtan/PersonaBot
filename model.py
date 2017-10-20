@@ -240,9 +240,10 @@ for item in dataloader:
     # Training:
     prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words], words_flat,
                              usrs_b[:,1:], sentence_lengths_padded[:,1:])
-    print(tonumpy(log_prob))
+    loss = -log_prob
+    print(tonumpy(loss))
     opt.zero_grad()
-    log_prob.backward()
+    loss.backward()
     clip_grad(params, 1)
     opt.step()
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
