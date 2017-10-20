@@ -119,11 +119,7 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.proj = NN.Sequential(
-                NN.Linear(state_size, num_words),
-                )
-        self.softmax = NN.Softmax()
-        init_weights(self.proj)
+        self.softmax = HierarchicalLogSoftmax(state_size, num_words)
         init_lstm(self.rnn)
 
     def forward(self, context_encodings, wd_emb, usr_emb, length):
@@ -162,7 +158,6 @@ class Decoder(NN.Module):
                 initial_state)
         h = h.permute(1, 0, 2)
         h = h[:, -1,:]
-        out = self.proj(embed.contiguous().view(-1, state_size))
         out = self.softmax(out)
         out = out.view(batch_size, maxlenbatch, -1, self._num_words)
         return out#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
@@ -201,9 +196,10 @@ for item in dataloader:
     addressee_padded = T.autograd.Variable(addressee_padded)
     
     batch_size = turns.size()[0]
+    max_words = words_padded.size()[2]
     #batch, turns in a sample, words in a message, embedding_dim
-    wds_b = T.stack([word_emb(words_padded[i,:,:]) for i in range(batch_size)])
-    wds_rev_b = T.stack([word_emb(words_reverse_padded[i,:,:]) for i in range(batch_size)])
+    wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, -1, max_words)
+    wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, -1, max_words)
     #batch, turns in a sample, embedding_dim
     usrs_b = user_emb(speaker_padded)
     addres_b = user_emb(addressee_padded)

@@ -141,3 +141,67 @@ class ConvMask(NN.Module):
         mask = length_mask((x.size()[0], x.size()[2]),convlengths).unsqueeze(1)
         x = x * mask
         return x
+
+
+class HierarchicalLogSoftmax(NN.Module):
+    def __init__(self, input_size, n_classes, n_words):
+        '''
+        n_words must be dividable by n_classes
+        '''
+        NN.Module.__init__(self)
+        assert n_words % n_classes == 0
+        self.n_words_per_cls = n_words // n_classes
+        self.n_classes = n_classes
+
+        self.W_cls = NN.Parameter(T.zeros(input_size, n_classes))
+        self.b_cls = NN.Parameter(T.zeros(n_classes))
+        self.W_word_in_cls = NN.Parameter(T.zeros(n_classes, input_size, self.n_words_per_cls))
+        self.b_word_in_cls = NN.Parameter(T.zeros(n_classes, self.n_words_per_cls))
+
+        INIT.xavier_uniform(self.W_cls)
+        INIT.xavier_uniform(self.W_word_in_cls)
+        INIT.constant(self.b_cls, 0)
+        INIT.constant(self.b_word_in_cls, 0)
+
+        # self.mapping[x]
+        perm = np.random.permutation(n_words)
+        mapping_dict = dict(zip(range(n_words), perm))
+        inv_mapping_dict = dict(zip(perm, range(n_words)))
+        self.mapping = T.LongTensor(np.array([mapping_dict[i] for i in range(n_words)], dtype='int64'))
+        self.inv_mapping = T.LongTensor(np.array([inv_mapping_dict[i] for i in range(n_words)], dtype='int64'))
+
+    def forward(self, x, target=None):
+        '''
+        x: (batch_size, input_size)
+        target: LongTensor (batch_size,) or None
+
+        return:
+        if target is None, returns
+            prob: (batch_size, n_words)
+        if target is a LongTensor, returns
+            prob: (batch_size)
+        '''
+        batch_size = x.size()[0]
+        cls_prob = F.log_softmax(x @ self.W_cls + self.b_cls)
+        if target is None:
+            word_in_cls_logit = x.unsqueeze(0) @ self.W_word_in_cls + self.b_word_in_cls.unsqueeze(1)
+            word_in_cls_prob = F.log_softmax(word_in_cls_logit.view(self.n_classes * batch_size, -1))
+            word_in_cls_prob = word_in_cls_prob.view(self.n_classes, batch_size, -1)
+            word_prob = cls_prob.transpose(1, 0).unsqueeze(2) + word_in_cls_prob
+            word_prob = word_prob.transpose(1, 0).contiguous().view(batch_size, -1)
+
+            return word_prob[:, self.mapping]
+        else:
+            internal_target = T.autograd.Variable(self.mapping)[target]
+            internal_target_cls = internal_target / self.n_words_per_cls
+            internal_target_word_in_cls = internal_target % self.n_words_per_cls
+
+            target_cls_prob = cls_prob.gather(1, internal_target_cls.unsqueeze(1))
+            target_W = self.W_word_in_cls[internal_target_cls]
+            target_b = self.b_word_in_cls[internal_target_cls]
+            target_word_in_cls_prob = F.log_softmax((x.unsqueeze(1) @ target_W).squeeze(1) + target_b)
+
+            word_prob = target_cls_prob + target_word_in_cls_prob
+            word_prob = word_prob.gather(1, internal_target_word_in_cls.unsqueeze(1))
+
+            return word_prob
