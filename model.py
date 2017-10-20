@@ -123,7 +123,7 @@ class Decoder(NN.Module):
         self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
 
-    def forward(self, context_encodings, wd_emb, wd_target, usr_emb, length):
+    def forward(self, context_encodings, wd_emb, usr_emb, length, wd_target=None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
@@ -293,8 +293,8 @@ for item in dataloader:
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
     # Training:
-    prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words], words_flat,
-                             usrs_b[:,1:], sentence_lengths_padded[:,1:])
+    prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
+                             usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
     loss = -log_prob
     opt.zero_grad()
     loss.backward()
@@ -312,7 +312,25 @@ for item in dataloader:
             itr
             )
     opt.step()
-    if itr % 1000 == 0:
+    if itr % 100 == 0:
+        prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
+                             usrs_b[:,1:], sentence_lengths_padded[:,1:]).squeeze()
+        #Energy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
+        Energy = (prob.exp() * prob * -1).sum(1)
+        E_mean, E_std, E_max, E_min = tonumpy(
+                Energy.mean(), Energy.std(), Energy.max(), Energy.min())
+        E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
+        train_writer.add_summary(
+            TF.Summary(
+                value=[
+                    TF.Summary.Value(tag='Energy_mean', simple_value=E_mean),
+                    TF.Summary.Value(tag='Energy_std', simple_value=E_std),
+                    TF.Summary.Value(tag='Energy_max', simple_value=E_max),
+                    TF.Summary.Value(tag='Energy_min', simple_value=E_min),
+                    ]
+                ),
+            itr
+            )
         T.save(user_emb, '%s-user_emb-%05d' % (modelnamesave, itr))
         T.save(word_emb, '%s-word_emb-%05d' % (modelnamesave, itr))
         T.save(enc, '%s-enc-%05d' % (modelnamesave, itr))
