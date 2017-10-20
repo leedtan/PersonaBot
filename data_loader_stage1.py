@@ -7,13 +7,14 @@ import numpy as np
 from collections import Counter
 
 EOS = '<eos>'
+START = '<start>'
 
 class UbuntuDialogDataset(Dataset):
     def __init__(self,
                  root='.',
                  wordcount_pkl='wordcount.pkl',
                  usercount_pkl='usercount.pkl',
-                 vocab_size=90000,
+                 vocab_size=89996,          # excluding padding, <unknown>, <eos>, <start>
                  user_size=None,
                  min_word_occurrence=None,
                  min_user_occurrence=5,
@@ -84,6 +85,7 @@ class UbuntuDialogDataset(Dataset):
         with open(self._pkls[i], 'rb') as f:
             item = pickle.load(f)
             for sentence in item['words']:
+                sentence.insert(0, START)
                 sentence.append(EOS)
             return item
 

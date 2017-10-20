@@ -4,12 +4,21 @@ import torch.nn as NN
 import torch.nn.functional as F
 import torch.nn.init as INIT
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+import os
 
 import numpy as np
+
+def cuda(obj):
+    if os.getenv('USE_CUDA', None):
+        return obj.cuda()
+    else:
+        return obj
 
 def tovar(*arrs):
     tensors = [(T.Tensor(a.astype('float32')) if isinstance(a, np.ndarray) else a) for a in arrs]
     vars_ = [T.autograd.Variable(t) for t in tensors]
+    if os.getenv('USE_CUDA', None):
+        vars_ = [v.cuda() for v in vars_]
     return vars_[0] if len(vars_) == 1 else vars_
 
 
@@ -192,7 +201,7 @@ class HierarchicalLogSoftmax(NN.Module):
 
             return word_prob[:, self.mapping]
         else:
-            internal_target = T.autograd.Variable(self.mapping)[target]
+            internal_target = tovar(self.mapping)[target]
             internal_target_cls = internal_target / self.n_words_per_cls
             internal_target_word_in_cls = internal_target % self.n_words_per_cls
 

@@ -88,9 +88,9 @@ class Context(NN.Module):
         batch_size = sent_encodings.size()[0]
         context_size = self._context_size
         
-        lstm_h = [tovar(T.zeros(batch_size, context_size)) for _ in range(num_layers)]
-        lstm_c = [tovar(T.zeros(batch_size, context_size)) for _ in range(num_layers)]
-        initial_state = [lstm_h, lstm_c]
+        lstm_h = tovar(T.zeros(num_layers, batch_size, context_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, context_size))
+        initial_state = (lstm_h, lstm_c)
         sent_encodings = sent_encodings.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
         embed = embed.contiguous().view(-1, context_size)
@@ -119,10 +119,20 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = HierarchicalLogSoftmax(state_size, num_words)
+        self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
 
-    def forward(self, context_encodings, wd_emb, usr_emb, length):
+    def forward(self, context_encodings, wd_emb, wd_target, usr_emb, length):
+        '''
+        Returns:
+            If wd_target is None, returns a 4D tensor P
+                (batch_size, max_turns, max_sentence_length, num_words)
+                where P[i, j, k, w] is the log probability of word w at sample i, dialogue j, word position k.
+            If wd_target is a LongTensor (batch_size, max_turns, max_sentence_length), returns a tuple
+                ((batch_size, max_turns, max_sentence_length), float)
+                where the tensor contains the probability of ground truth (wd_target) and the float
+                scalar is the log-likelihood.
+        '''
         num_layers = self._num_layers
         batch_size = wd_emb.size()[0]
         maxlenbatch = wd_emb.size()[1]
@@ -133,11 +143,9 @@ class Decoder(NN.Module):
         state_size = self._state_size
         
         
-        lstm_h = [tovar(T.zeros(batch_size * maxlenbatch, state_size))
-            for _ in range(num_layers)]
-        lstm_c = [tovar(T.zeros(batch_size * maxlenbatch, state_size))
-            for _ in range(num_layers)]
-        initial_state = [lstm_h, lstm_c]
+        lstm_h = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
+        initial_state = (lstm_h, lstm_c)
         #batch, turns in a sample, words in a message, embedding_dim
         
         usr_emb = usr_emb.unsqueeze(2)
@@ -158,9 +166,19 @@ class Decoder(NN.Module):
                 initial_state)
         h = h.permute(1, 0, 2)
         h = h[:, -1,:]
-        out = self.softmax(out)
-        out = out.view(batch_size, maxlenbatch, -1, self._num_words)
-        return out#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
+        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, state_size)
+        if wd_target is None:
+            out = self.softmax(embed.view(-1, state_size))
+            out = out.view(batch_size, maxlenbatch, -1, self._num_words)
+            return out#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
+        else:
+            target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
+            out = self.softmax(embed.view(-1, state_size), target.view(-1))
+            out = out.view(batch_size, maxlenbatch, maxwordsmessage)
+            mask = (target != 0).float()
+            out = out * mask
+            log_prob = out.sum() / mask.sum()
+            return out, log_prob
 
 
 
@@ -173,33 +191,39 @@ usrs = dataset.users
 num_usrs = len(usrs)
 vcb_len = len(vcb)
 num_words = vcb_len
-size_usr = 12
-size_wd = 14
-size_sentence = 18
-size_context = 22
+size_usr = 50
+size_wd = 50
+size_sentence = 300
+size_context = 300
 
-user_emb = NN.Embedding(num_usrs+1, size_usr, padding_idx = 0)
-word_emb = NN.Embedding(vcb_len+1, size_wd, padding_idx = 0)
-enc = Encoder(size_usr, size_wd, size_sentence, num_layers = 1)
-context = Context(size_sentence, size_context, num_layers = 1)
-decoder = Decoder(size_usr, size_wd, size_context, num_words+1)
+user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
+word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
+enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = 1))
+context = cuda(Context(size_sentence, size_context, num_layers = 1))
+decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1))
+
+params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
+opt = T.optim.Adam(params, lr=1e-4)
 
 
-dataloader = UbuntuDialogDataLoader(dataset, 2)
+dataloader = UbuntuDialogDataLoader(dataset, 1, num_workers=1)
 
 for item in dataloader:
     turns, sentence_lengths_padded, speaker_padded, \
         addressee_padded, words_padded, words_reverse_padded = item
-    words_padded = T.autograd.Variable(words_padded)
-    words_reverse_padded = T.autograd.Variable(words_reverse_padded)
-    speaker_padded = T.autograd.Variable(speaker_padded)
-    addressee_padded = T.autograd.Variable(addressee_padded)
+    words_padded = tovar(words_padded)
+    words_reverse_padded = tovar(words_reverse_padded)
+    speaker_padded = tovar(speaker_padded)
+    addressee_padded = tovar(addressee_padded)
+    sentence_lengths_padded = cuda(sentence_lengths_padded)
+    turns = cuda(turns)
     
     batch_size = turns.size()[0]
+    max_turns = words_padded.size()[1]
     max_words = words_padded.size()[2]
     #batch, turns in a sample, words in a message, embedding_dim
-    wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, -1, max_words)
-    wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, -1, max_words)
+    wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+    wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
     #batch, turns in a sample, embedding_dim
     usrs_b = user_emb(speaker_padded)
     addres_b = user_emb(addressee_padded)
@@ -211,14 +235,21 @@ for item in dataloader:
                 sentence_lengths_padded.view(-1))
     encodings = encodings.view(batch_size, max_turns, -1)
     ctx = context(encodings, turns)
-    decoded = decoder(ctx[:,:-1:], wds_b[:,1:,:],
-                      usrs_b[:,1:,], sentence_lengths_padded[:,1:])
-    max_words = decoded.size()[2]
-    decoded_flat = decoded.view(batch_size * (max_turns-1) * max_words, -1)
-    words_flat = words_padded[:,1:,:max_words].contiguous().view(-1)
-    perplex = decoded_flat.gather(1, words_flat.view(-1, 1))
-    print(perplex)
-    break
+    max_output_words = sentence_lengths_padded[:, 1:].max()
+    words_flat = words_padded[:,1:,:max_output_words].contiguous()
+    # Training:
+    prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words], words_flat,
+                             usrs_b[:,1:], sentence_lengths_padded[:,1:])
+    print(tonumpy(log_prob))
+    opt.zero_grad()
+    log_prob.backward()
+    clip_grad(params, 1)
+    opt.step()
+    # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
+    # We need to manually unroll the LSTMs.
+    #decoded = decoder(ctx[:, :-1:], wds_b[:, 1:, :], None,
+    #                  usrs_b[:, 1:,], sentence_lengths_padded[:, 1:])
+    #print(decoded)
 
 
 
