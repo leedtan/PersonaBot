@@ -243,7 +243,7 @@ size_usr = args.size_usr
 size_wd = args.size_wd
 size_sentence = args.size_sentence
 size_context = args.size_context
-decoder_size_sentence = args.size_sentence
+decoder_size_sentence = args.decoder_size_sentence
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
