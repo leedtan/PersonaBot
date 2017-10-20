@@ -258,7 +258,7 @@ params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, d
 opt = T.optim.Adam(params, lr=args.lr)
 
 
-dataloader = UbuntuDialogDataLoader(dataset, 1, num_workers=1)
+dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=1)
 
 itr = args.loaditerations
 
