@@ -1,2 +1,5 @@
 data/
 .idea/
+*.pkl
+*.pyc
+logs/

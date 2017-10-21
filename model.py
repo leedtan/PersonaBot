@@ -98,8 +98,6 @@ class Context(NN.Module):
         #h = h.permute(1, 0, 2)
         return embed.view(batch_size, -1, context_size)
 
-
-
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, num_words, 
                  state_size = None, num_layers=1):
@@ -142,13 +140,13 @@ class Decoder(NN.Module):
         size_wd = self._size_wd
         size_usr = self._size_usr
         state_size = self._state_size
-        
+
         
         lstm_h = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
         lstm_c = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
         initial_state = (lstm_h, lstm_c)
         #batch, turns in a sample, words in a message, embedding_dim
-        
+
         usr_emb = usr_emb.unsqueeze(2)
         usr_emb = usr_emb.expand(batch_size,maxlenbatch,maxwordsmessage,
                                  usr_emb.size()[-1])
@@ -158,8 +156,9 @@ class Decoder(NN.Module):
         context_encodings = context_encodings.unsqueeze(2)
         context_encodings = context_encodings.expand(
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
-        
+
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
+
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
@@ -180,6 +179,98 @@ class Decoder(NN.Module):
             out = out * mask
             log_prob = out.sum() / mask.sum()
             return out, log_prob
+
+    def getNBestNextWords(self, embed_seq, current_state, n=1):
+        """
+
+        :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
+        :param current_state: num_layers * num_directions x batch_size x hidden_size
+        :param n: int, return top n words.
+        :return: batch_size x n
+        """
+        batch_size = embed_seq.size(0)
+        embed, current_state = self.rnn(embed_seq.unsqueeze(0), current_state)
+        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, self._state_size)
+        out = self.softmax(embed.squeeze())
+        val, indexes = out.topk(n, 1)
+        return indexes, current_state
+
+    def greedyGenerate(self, context_encodings, usr_emb, word_emb, dataset):
+        """
+        How to require_grad=False ?
+        :param context_encodings: (batch_size x context_size)
+        :param word_emb:  idx to vector word embedder.
+        :param usr_emb: (batch_size x usr_emb_size)
+        :return: response : (batch_size x max_response_length)
+        """
+
+        num_layers = self._num_layers
+        state_size = self._state_size
+        batch_size = context_encodings.size(0)
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+        print(lstm_h.size())
+        current_state = (lstm_h, lstm_c)
+
+        # Initial word of response : Start token
+        init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        # End of generated sentence : EOS token
+        stop_word = T.LongTensor(batch_size).fill_(dataset.index_word(EOS))
+
+        current_w = init_word
+        output = current_w.data.unsqueeze(1)
+
+        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < 10:
+            current_w_emb = word_emb(current_w.squeeze())
+            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
+
+            current_w, current_state= self.getNBestNextWords(embed_seq, current_state)
+            output = T.cat((output, current_w.data), 1)
+
+        return output
+
+    def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset, beam_size=13):
+        """
+        :param context_encodings: (batch_size x context_size)
+        :param usr_emb: (batch_size x usr_emb_size)
+        :param word_emb:  idx to vector word embedder.
+        :param dataset:  dataset to get EOS/START tokens ids
+        :param beam_size:  width of beam search.
+        :return: response : (batch_size x max_response_length)
+        """
+
+        num_layers = self._num_layers
+        state_size = self._state_size
+        batch_size = context_encodings.size(0)
+
+        # End of generated sentence : EOS token
+        stop_word = T.LongTensor(batch_size).fill_(dataset.index_word(EOS))
+
+        # Viterbi tensors :
+        s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
+        s_idx_w_idx_logproba= tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
+        s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size * beam_size, state_size))
+        s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size * beam_size, state_size))
+
+        s_idx = 0
+
+        usr_emb = usr_emb.unsqueeze(1).expand(usr_emb.size(0), beam_size, usr_emb.size(1))
+        context_encodings = context_encodings.unsqueeze(1).expand(context_encodings.size(0), beam_size, context_encodings.size(1))
+
+        while s_idx < 10:
+            current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
+            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
+            print(embed_seq.size(), s_idx_w_idx_lstm_h.size())
+            transition_probabilities, current_state = self.getNBestNextWords(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h, s_idx_w_idx_lstm_c), beam_size)
+            transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
+
+            print(transition_probabilities.size(), current_state[0].size(), current_state[1].size())
+
+            s_idx += 1
+            sys.exit(1)
+
+        pass
+
 
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
@@ -202,9 +293,7 @@ parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 args = parser.parse_args()
 
-dataset = UbuntuDialogDataset(
-        'ubuntu', 
-        'wordcount.pkl', 'usercount.pkl')
+dataset = UbuntuDialogDataset('ubuntu', 'wordcount.pkl', 'usercount.pkl')
 try:
     os.mkdir(args.logdir)
 except:
@@ -292,6 +381,9 @@ for item in dataloader:
     ctx = context(encodings, turns)
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
+    # Test decoder :
+    decoder.viterbiGenerate(ctx[:,-1], usrs_b[:,-1], word_emb, dataset)
+
     # Training:
     prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
                              usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
