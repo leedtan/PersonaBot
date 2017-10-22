@@ -264,94 +264,95 @@ opt = T.optim.Adam(params, lr=args.lr)
 dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
 itr = args.loaditerations
+epoch = 0
 
-for item in dataloader:
-    itr += 1
-    turns, sentence_lengths_padded, speaker_padded, \
-        addressee_padded, words_padded, words_reverse_padded = item
-    words_padded = tovar(words_padded)
-    words_reverse_padded = tovar(words_reverse_padded)
-    speaker_padded = tovar(speaker_padded)
-    addressee_padded = tovar(addressee_padded)
-    sentence_lengths_padded = cuda(sentence_lengths_padded)
-    turns = cuda(turns)
-    
-    batch_size = turns.size()[0]
-    max_turns = words_padded.size()[1]
-    max_words = words_padded.size()[2]
-    #batch, turns in a sample, words in a message, embedding_dim
-    wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
-    wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
-    #batch, turns in a sample, embedding_dim
-    usrs_b = user_emb(speaker_padded)
-    addres_b = user_emb(addressee_padded)
-    
-    max_turns = turns.max()
-    max_words = wds_b.size()[2]
-    encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
-                usrs_b.view(batch_size * max_turns, size_usr), 
-                sentence_lengths_padded.view(-1))
-    encodings = encodings.view(batch_size, max_turns, -1)
-    ctx = context(encodings, turns)
-    max_output_words = sentence_lengths_padded[:, 1:].max()
-    words_flat = words_padded[:,1:,:max_output_words].contiguous()
-    # Training:
-    prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
-                             usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
-    loss = -log_prob
-    opt.zero_grad()
-    loss.backward()
-    grad_norm = clip_grad(params, args.gradclip)
-    loss, grad_norm = tonumpy(loss, grad_norm)
-    loss = loss[0]
-    print(loss)
-    train_writer.add_summary(
-            TF.Summary(
-                value=[
-                    TF.Summary.Value(tag='loss', simple_value=loss),
-                    TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                    ]
-                ),
-            itr
-            )
-    opt.step()
-    if itr % 100 == 0:
-        prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
-                             usrs_b[:,1:], sentence_lengths_padded[:,1:]).squeeze()
-        #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-        mask = mask_4d(prob.size(), turns -1 , sentence_lengths_padded[:,1:])
-        Entropy = (prob.exp() * prob * -1) * mask
-        Entropy_per_word = Entropy.sum(-1)
-        Entropy_per_word = tonumpy(Entropy_per_word)[0]
-        #E_mean = tonumpy(Entropy_per_word.sum() / mask.sum())[0]
-        #E_mean, E_std, E_max, E_min = tonumpy(
-        #        Entropy_per_word.mean(), Entropy.std(), Entropy.max(), Entropy.min())
+while True:
+    epoch += 1
+    for item in dataloader:
+        itr += 1
+        turns, sentence_lengths_padded, speaker_padded, \
+            addressee_padded, words_padded, words_reverse_padded = item
+        words_padded = tovar(words_padded)
+        words_reverse_padded = tovar(words_reverse_padded)
+        speaker_padded = tovar(speaker_padded)
+        addressee_padded = tovar(addressee_padded)
+        sentence_lengths_padded = cuda(sentence_lengths_padded)
+        turns = cuda(turns)
         
-        E_mean, E_std, E_max, E_min = \
-                np.nanmean(Entropy_per_word), np.nanstd(Entropy_per_word), \
-                np.nanmax(Entropy_per_word), np.nanmin(Entropy_per_word)
+        batch_size = turns.size()[0]
+        max_turns = words_padded.size()[1]
+        max_words = words_padded.size()[2]
+        #batch, turns in a sample, words in a message, embedding_dim
+        wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+        wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+        #batch, turns in a sample, embedding_dim
+        usrs_b = user_emb(speaker_padded)
+        addres_b = user_emb(addressee_padded)
         
-        
-        #E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
+        max_turns = turns.max()
+        max_words = wds_b.size()[2]
+        encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
+                    usrs_b.view(batch_size * max_turns, size_usr), 
+                    sentence_lengths_padded.view(-1))
+        encodings = encodings.view(batch_size, max_turns, -1)
+        ctx = context(encodings, turns)
+        max_output_words = sentence_lengths_padded[:, 1:].max()
+        words_flat = words_padded[:,1:,:max_output_words].contiguous()
+        # Training:
+        prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
+                                 usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
+        loss = -log_prob
+        opt.zero_grad()
+        loss.backward()
+        grad_norm = clip_grad(params, args.gradclip)
+        loss, grad_norm = tonumpy(loss, grad_norm)
+        loss = loss[0]
+        print(loss)
         train_writer.add_summary(
-            TF.Summary(
-                value=[
-                    TF.Summary.Value(tag='Entropy_mean', simple_value=E_mean),
-                    TF.Summary.Value(tag='Entropy_std', simple_value=E_std),
-                    TF.Summary.Value(tag='Entropy_max', simple_value=E_max),
-                    TF.Summary.Value(tag='Entropy_min', simple_value=E_min),
-                    ]
-                ),
-            itr
-            )
-        T.save(user_emb, '%s-user_emb-%05d' % (modelnamesave, itr))
-        T.save(word_emb, '%s-word_emb-%05d' % (modelnamesave, itr))
-        T.save(enc, '%s-enc-%05d' % (modelnamesave, itr))
-        T.save(context, '%s-context-%05d' % (modelnamesave, itr))
-        T.save(decoder, '%s-decoder-%05d' % (modelnamesave, itr))
-    print('G', itr, tonumpy(loss))
-
-    
+                TF.Summary(
+                    value=[
+                        TF.Summary.Value(tag='loss', simple_value=loss),
+                        TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                        ]
+                    ),
+                itr
+                )
+        opt.step()
+        if itr % 100 == 0:
+            prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
+                                 usrs_b[:,1:], sentence_lengths_padded[:,1:]).squeeze()
+            #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
+            mask = mask_4d(prob.size(), turns -1 , sentence_lengths_padded[:,1:])
+            Entropy = (prob.exp() * prob * -1) * mask
+            Entropy_per_word = Entropy.sum(-1)
+            Entropy_per_word = tonumpy(Entropy_per_word)[0]
+            #E_mean = tonumpy(Entropy_per_word.sum() / mask.sum())[0]
+            #E_mean, E_std, E_max, E_min = tonumpy(
+            #        Entropy_per_word.mean(), Entropy.std(), Entropy.max(), Entropy.min())
+            
+            E_mean, E_std, E_max, E_min = \
+                    np.nanmean(Entropy_per_word), np.nanstd(Entropy_per_word), \
+                    np.nanmax(Entropy_per_word), np.nanmin(Entropy_per_word)
+            
+            
+            #E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
+            train_writer.add_summary(
+                TF.Summary(
+                    value=[
+                        TF.Summary.Value(tag='Entropy_mean', simple_value=E_mean),
+                        TF.Summary.Value(tag='Entropy_std', simple_value=E_std),
+                        TF.Summary.Value(tag='Entropy_max', simple_value=E_max),
+                        TF.Summary.Value(tag='Entropy_min', simple_value=E_min),
+                        ]
+                    ),
+                itr
+                )
+            T.save(user_emb, '%s-user_emb-%05d' % (modelnamesave, itr))
+            T.save(word_emb, '%s-word_emb-%05d' % (modelnamesave, itr))
+            T.save(enc, '%s-enc-%05d' % (modelnamesave, itr))
+            T.save(context, '%s-context-%05d' % (modelnamesave, itr))
+            T.save(decoder, '%s-decoder-%05d' % (modelnamesave, itr))
+        print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
     
     
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
