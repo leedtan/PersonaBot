@@ -269,10 +269,11 @@ epoch = 0
 
 if modelnameload:
     if len(modelnameload) > 0:
-        d = T.load('%s-dis-%05d' % (modelnameload, args.loaditerations))
-        g = T.load('%s-gen-%05d' % (modelnameload, args.loaditerations))
-        e_g = T.load('%s-eg-%05d' % (modelnameload, args.loaditerations))
-        e_d = T.load('%s-ed-%05d' % (modelnameload, args.loaditerations))
+        user_emb = T.load('%s-user_emb-%05d' % (modelnameload, args.loaditerations))
+        word_emb = T.load('%s-word_emb-%05d' % (modelnameload, args.loaditerations))
+        enc = T.load('%s-enc-%05d' % (modelnameload, args.loaditerations))
+        context = T.load('%s-context-%05d' % (modelnameload, args.loaditerations))
+        decoder = T.load('%s-decoder-%05d' % (modelnameload, args.loaditerations))
 
 while True:
     epoch += 1
