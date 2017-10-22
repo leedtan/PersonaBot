@@ -200,11 +200,14 @@ parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=100)
+parser.add_argument('--max_turns_allowed', type=int, default=20)
+parser.add_argument('--num_loader_workers', type=int, default=4)
 args = parser.parse_args()
 
-dataset = UbuntuDialogDataset(
-        'ubuntu', 
-        'wordcount.pkl', 'usercount.pkl')
+dataset = UbuntuDialogDataset(args.dataroot,
+                              max_sentence_length_allowed=args.max_sentence_length_allowed,
+                              max_turns_allowed=args.max_turns_allowed)
 try:
     os.mkdir(args.logdir)
 except:
@@ -258,7 +261,7 @@ params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, d
 opt = T.optim.Adam(params, lr=args.lr)
 
 
-dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=1)
+dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
 itr = args.loaditerations
 
