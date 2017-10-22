@@ -164,8 +164,7 @@ class Decoder(NN.Module):
         embed, (h, c) = dynamic_rnn(
                 self.rnn, embed_seq, length.contiguous().view(-1),
                 initial_state)
-        h = h.permute(1, 0, 2)
-        h = h[:, -1,:]
+        maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, state_size)
         if wd_target is None:
             out = self.softmax(embed.view(-1, state_size))
@@ -188,20 +187,20 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=2)
 parser.add_argument('--context_layers', type=int, default=2)
-parser.add_argument('--size_context', type=int, default=128)
-parser.add_argument('--size_sentence', type=int, default=128)
-parser.add_argument('--decoder_size_sentence', type=int, default=128)
+parser.add_argument('--size_context', type=int, default=64)
+parser.add_argument('--size_sentence', type=int, default=64)
+parser.add_argument('--decoder_size_sentence', type=int, default=64)
 parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=32)
-parser.add_argument('--batchsize', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=16)
+parser.add_argument('--batchsize', type=int, default=64)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=100)
-parser.add_argument('--max_turns_allowed', type=int, default=6)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=10)
+parser.add_argument('--max_turns_allowed', type=int, default=3)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 args = parser.parse_args()
 
@@ -318,11 +317,11 @@ while True:
                 itr
                 )
         opt.step()
-        if itr % 10 == 0:
-            prob = decoder(ctx[:,:-1], wds_b[:,1:,:max_output_words],
-                                 usrs_b[:,1:], sentence_lengths_padded[:,1:]).squeeze()
+        if itr % 100 == 0:
+            prob = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
+                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:]).squeeze()
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-            mask = mask_4d(prob.size(), turns -1 , sentence_lengths_padded[:,1:])
+            mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
             Entropy = (prob.exp() * prob * -1) * mask
             Entropy_per_word = Entropy.sum(-1)
             Entropy_per_word = tonumpy(Entropy_per_word)[0]
