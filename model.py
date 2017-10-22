@@ -188,12 +188,12 @@ parser.add_argument('--outputdir', type=str, default ='outputs',help='output dir
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=1)
 parser.add_argument('--decoder_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=12)
-parser.add_argument('--size_sentence', type=int, default=6)
-parser.add_argument('--decoder_size_sentence', type=int, default=4)
-parser.add_argument('--size_usr', type=int, default=10)
-parser.add_argument('--size_wd', type=int, default=8)
-parser.add_argument('--batchsize', type=int, default=2)
+parser.add_argument('--size_context', type=int, default=128)
+parser.add_argument('--size_sentence', type=int, default=128)
+parser.add_argument('--decoder_size_sentence', type=int, default=128)
+parser.add_argument('--size_usr', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=32)
+parser.add_argument('--batchsize', type=int, default=1024)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
@@ -315,7 +315,7 @@ for item in dataloader:
             itr
             )
     opt.step()
-    if itr % 10 == 0:
+    if itr % 100 == 0:
         prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
                              usrs_b[:,1:], sentence_lengths_padded[:,1:]).squeeze()
         #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
