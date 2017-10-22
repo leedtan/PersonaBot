@@ -64,6 +64,16 @@ def length_mask(size, length):
         weight[i, :length[i]] = 1.
     weight = tovar(weight)
     return weight
+def mask_4d(size, length1, length2):
+    length1 = tonumpy(length1)
+    length2 = tonumpy(length2)
+    batch_size = size[0]
+    weight = T.zeros(*size)/0
+    for i in range(batch_size):
+        for j in range(length1[i]):
+            weight[i, :length1[i], :length2[i,j],:] = 1.
+    weight = tovar(weight)
+    return weight
 
 
 def dynamic_rnn(rnn, seq, length, initial_state):

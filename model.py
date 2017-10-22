@@ -193,7 +193,7 @@ parser.add_argument('--size_sentence', type=int, default=6)
 parser.add_argument('--decoder_size_sentence', type=int, default=4)
 parser.add_argument('--size_usr', type=int, default=10)
 parser.add_argument('--size_wd', type=int, default=8)
-parser.add_argument('--batchsize', type=int, default=32)
+parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
@@ -312,21 +312,31 @@ for item in dataloader:
             itr
             )
     opt.step()
-    if itr % 100 == 0:
+    if itr % 10 == 0:
         prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
                              usrs_b[:,1:], sentence_lengths_padded[:,1:]).squeeze()
-        #Energy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-        Energy = (prob.exp() * prob * -1).sum(1)
-        E_mean, E_std, E_max, E_min = tonumpy(
-                Energy.mean(), Energy.std(), Energy.max(), Energy.min())
-        E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
+        #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
+        mask = mask_4d(prob.size(), turns -1 , sentence_lengths_padded[:,1:])
+        Entropy = (prob.exp() * prob * -1) * mask
+        Entropy_per_word = Entropy.sum(-1)
+        Entropy_per_word = tonumpy(Entropy_per_word)[0]
+        #E_mean = tonumpy(Entropy_per_word.sum() / mask.sum())[0]
+        #E_mean, E_std, E_max, E_min = tonumpy(
+        #        Entropy_per_word.mean(), Entropy.std(), Entropy.max(), Entropy.min())
+        
+        E_mean, E_std, E_max, E_min = \
+                np.nanmean(Entropy_per_word), np.nanstd(Entropy_per_word), \
+                np.nanmax(Entropy_per_word), np.nanmin(Entropy_per_word)
+        
+        
+        #E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
         train_writer.add_summary(
             TF.Summary(
                 value=[
-                    TF.Summary.Value(tag='Energy_mean', simple_value=E_mean),
-                    TF.Summary.Value(tag='Energy_std', simple_value=E_std),
-                    TF.Summary.Value(tag='Energy_max', simple_value=E_max),
-                    TF.Summary.Value(tag='Energy_min', simple_value=E_min),
+                    TF.Summary.Value(tag='Entropy_mean', simple_value=E_mean),
+                    TF.Summary.Value(tag='Entropy_std', simple_value=E_std),
+                    TF.Summary.Value(tag='Entropy_max', simple_value=E_max),
+                    TF.Summary.Value(tag='Entropy_min', simple_value=E_min),
                     ]
                 ),
             itr
