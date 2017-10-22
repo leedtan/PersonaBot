@@ -108,7 +108,6 @@ class Decoder(NN.Module):
         self._context_size = context_size
         self._size_wd = size_wd
         self._size_usr = size_usr
-        num_layers = 1 #NOT ALLOWED TO CHANGE NUM LAYERS
         self._num_layers = num_layers
         if state_size == None:
             state_size = size_usr + size_wd + context_size
@@ -186,8 +185,9 @@ parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
-parser.add_argument('--encoder_layers', type=int, default=1)
-parser.add_argument('--decoder_layers', type=int, default=1)
+parser.add_argument('--encoder_layers', type=int, default=2)
+parser.add_argument('--decoder_layers', type=int, default=2)
+parser.add_argument('--context_layers', type=int, default=2)
 parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=128)
 parser.add_argument('--decoder_size_sentence', type=int, default=128)
@@ -252,10 +252,10 @@ decoder_size_sentence = args.decoder_size_sentence
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
-enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = 1))
-context = cuda(Context(size_sentence, size_context, num_layers = 1))
+enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
+context = cuda(Context(size_sentence, size_context, num_layers = args.context_layers))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
-                       decoder_size_sentence))
+                       decoder_size_sentence, num_layers = args.decoder_layers))
 
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
