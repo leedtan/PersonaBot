@@ -186,8 +186,8 @@ class HierarchicalLogSoftmax(NN.Module):
         perm = np.random.permutation(n_words)
         mapping_dict = dict(zip(range(n_words), perm))
         inv_mapping_dict = dict(zip(perm, range(n_words)))
-        self.mapping = T.LongTensor(np.array([mapping_dict[i] for i in range(n_words)], dtype='int64'))
-        self.inv_mapping = T.LongTensor(np.array([inv_mapping_dict[i] for i in range(n_words)], dtype='int64'))
+        self.mapping = cuda(T.LongTensor(np.array([mapping_dict[i] for i in range(n_words)], dtype='int64')))
+        self.inv_mapping = cuda(T.LongTensor(np.array([inv_mapping_dict[i] for i in range(n_words)], dtype='int64')))
 
     def forward(self, x, target=None):
         '''
