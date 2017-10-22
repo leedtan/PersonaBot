@@ -267,6 +267,13 @@ dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.nu
 itr = args.loaditerations
 epoch = 0
 
+if modelnameload:
+    if len(modelnameload) > 0:
+        d = T.load('%s-dis-%05d' % (modelnameload, args.loaditerations))
+        g = T.load('%s-gen-%05d' % (modelnameload, args.loaditerations))
+        e_g = T.load('%s-eg-%05d' % (modelnameload, args.loaditerations))
+        e_d = T.load('%s-ed-%05d' % (modelnameload, args.loaditerations))
+
 while True:
     epoch += 1
     for item in dataloader:
