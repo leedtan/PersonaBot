@@ -84,19 +84,20 @@ class Context(NN.Module):
                 )
         init_lstm(self.rnn)
 
-    def forward(self, sent_encodings, length):
+    def forward(self, sent_encodings, length, initial_state=None):
         num_layers = self._num_layers
         batch_size = sent_encodings.size()[0]
         context_size = self._context_size
         
-        lstm_h = tovar(T.zeros(num_layers, batch_size, context_size))
-        lstm_c = tovar(T.zeros(num_layers, batch_size, context_size))
-        initial_state = (lstm_h, lstm_c)
+        if initial_state is None:
+            lstm_h = tovar(T.zeros(num_layers, batch_size, context_size))
+            lstm_c = tovar(T.zeros(num_layers, batch_size, context_size))
+            initial_state = (lstm_h, lstm_c)
         sent_encodings = sent_encodings.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
         embed = embed.contiguous().view(-1, context_size)
         #h = h.permute(1, 0, 2)
-        return embed.view(batch_size, -1, context_size)
+        return embed.view(batch_size, -1, context_size), (h, c)
 
 
 
@@ -122,7 +123,7 @@ class Decoder(NN.Module):
         self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
 
-    def forward(self, context_encodings, wd_emb, usr_emb, length, wd_target=None):
+    def forward(self, context_encodings, wd_emb, usr_emb, length, wd_target=None, initial_state=None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
@@ -141,11 +142,11 @@ class Decoder(NN.Module):
         size_wd = self._size_wd
         size_usr = self._size_usr
         state_size = self._state_size
-        
-        
-        lstm_h = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
-        lstm_c = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
-        initial_state = (lstm_h, lstm_c)
+
+        if initial_state is None:
+            lstm_h = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
+            lstm_c = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
+            initial_state = (lstm_h, lstm_c)
         #batch, turns in a sample, words in a message, embedding_dim
         
         usr_emb = usr_emb.unsqueeze(2)
@@ -157,7 +158,7 @@ class Decoder(NN.Module):
         context_encodings = context_encodings.unsqueeze(2)
         context_encodings = context_encodings.expand(
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
-        
+
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
@@ -166,6 +167,7 @@ class Decoder(NN.Module):
                 initial_state)
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, state_size)
+
         if wd_target is None:
             out = self.softmax(embed.view(-1, state_size))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
@@ -177,7 +179,7 @@ class Decoder(NN.Module):
             mask = (target != 0).float()
             out = out * mask
             log_prob = out.sum() / mask.sum()
-            return out, log_prob
+            return out, log_prob, (h, c)
 
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
@@ -294,11 +296,11 @@ while True:
                     usrs_b.view(batch_size * max_turns, size_usr), 
                     sentence_lengths_padded.view(-1))
         encodings = encodings.view(batch_size, max_turns, -1)
-        ctx = context(encodings, turns)
+        ctx, _ = context(encodings, turns)
         max_output_words = sentence_lengths_padded[:, 1:].max()
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
         # Training:
-        prob, log_prob = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
+        prob, log_prob, _ = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
                                  usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
         loss = -log_prob
         opt.zero_grad()
