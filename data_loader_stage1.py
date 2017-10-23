@@ -137,6 +137,14 @@ class UbuntuDialogDataset(Dataset):
         return len(self._vocab)
 
     @property
+    def start_token_index(self):
+        return self.index_word(START)
+
+    @property
+    def end_token_index(self):
+        return self.index_word(EOS)
+
+    @property
     def unknown_user_index(self):
         return len(self._users)
 
@@ -160,7 +168,7 @@ class UbuntuDialogDataset(Dataset):
         if 0 <= i < len(self._vocab):       # padding already in self._vocab
             return self._vocab[i]
         elif i == self.unknown_word_index:
-            return '<unknown>'
+            return UNKNOWN
         else:
             raise ValueError('index out of range')
 
@@ -168,7 +176,7 @@ class UbuntuDialogDataset(Dataset):
         if 0 <= i < len(self._users):       # null already in self._users
             return self._users[i]
         elif i == self.unknown_user_index:
-            return '<unknown>'
+            return UNKNOWN
         else:
             raise ValueError('index out of range')
 

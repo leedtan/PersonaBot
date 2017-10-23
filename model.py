@@ -30,6 +30,7 @@ from collections import Counter
 from data_loader_stage1 import *
 
 from adv import *
+from test import test
 
 
 class Encoder(NN.Module):
@@ -125,12 +126,18 @@ class Decoder(NN.Module):
         self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
 
+    def zero_state(self, batch_size):
+        lstm_h = tovar(T.zeros(self._num_layers, batch_size, self._state_size))
+        lstm_c = tovar(T.zeros(self._num_layers, batch_size, self._state_size))
+        initial_state = (lstm_h, lstm_c)
+        return initial_state
+
     def forward(self, context_encodings, wd_emb, usr_emb, length, wd_target=None, initial_state=None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
                 (batch_size, max_turns, max_sentence_length, num_words)
-                where P[i, j, k, w] is the log probability of word w at sample i, dialogue j, word position k.
+                where P[i, j, k, w] is the log probability of word w at sample i, utterance j, word position k.
             If wd_target is a LongTensor (batch_size, max_turns, max_sentence_length), returns a tuple
                 ((batch_size, max_turns, max_sentence_length), float)
                 where the tensor contains the probability of ground truth (wd_target) and the float
@@ -146,9 +153,7 @@ class Decoder(NN.Module):
         state_size = self._state_size
 
         if initial_state is None:
-            lstm_h = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
-            lstm_c = tovar(T.zeros(num_layers, batch_size * maxlenbatch, state_size))
-            initial_state = (lstm_h, lstm_c)
+            initial_state = self.zero_state(batch_size)
         #batch, turns in a sample, words in a message, embedding_dim
         
         usr_emb = usr_emb.unsqueeze(2)
@@ -173,7 +178,7 @@ class Decoder(NN.Module):
         if wd_target is None:
             out = self.softmax(embed.view(-1, state_size))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
-            return out#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
+            return out, (h, c)#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
             out = self.softmax(embed.view(-1, state_size), target.view(-1))
@@ -373,8 +378,22 @@ while True:
                         ),
                     itr
                     )
+
+        # Beam search test
+        words = tonumpy(words_padded.data[0, ::2])
+        full_turns = words.shape[0]
+        sentence_lengths = tonumpy(sentence_lengths_padded.data[0, ::2])
+        initiator = speaker_padded.data[0, 0]
+        respondent = speaker_padded.data[0, 1]
+        words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(full_turns)]
+        dialogue, scores = test(dataset, enc, context, dec, word_emb, user_emb, words_nopad,
+                                initiator, respondent, args.max_sentence_length)
+        dialogue_strings = dataset.translate_item(None, None, dialogue)
+        for d, ds, s in zip(dialogue, dialogue_strings, scores):
+            print(d, ds, s)
+
         if itr % 100 == 0:
-            prob = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
+            prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
                                  usrs_b[:4,1:], sentence_lengths_padded[:4,1:]).squeeze()
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
             mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
