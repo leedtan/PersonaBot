@@ -1,5 +1,6 @@
 
 import torch as T
+from modules import *
 from collections import Iterable, namedtuple
 from numbers import Integral
 
