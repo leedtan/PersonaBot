@@ -377,8 +377,6 @@ while True:
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
                context,words_padded, decoder, scale = 1e-4)
-            wds_b = wds_b.detach()
-            usrs_b = usrs_b.detach()
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
@@ -391,9 +389,6 @@ while True:
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded,
                     words_padded, decoder)
-            encodings = encodings.detach()
-            wds_b = tovar(wds_b.data).detach()
-            usrs_b = usrs_b.detach()
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
@@ -402,9 +397,6 @@ while True:
         if itr % 10 == 3:
             wds_adv, usrs_adv, ctx_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder)
-            ctx = ctx.detach()
-            wds_b = tovar(wds_b.data).detach()
-            usrs_b = usrs_b.detach()
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
