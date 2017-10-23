@@ -158,7 +158,7 @@ def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
                            create_graph=True, retain_graph=True, only_inputs=True)
     ctx_adv = (ctx_adv > 0).type(T.FloatTensor) * scale - (ctx_adv < 0).type(T.FloatTensor) * scale
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale - (wds_adv < 0).type(T.FloatTensor) * scale
-    usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale - (usrs_adv < 0).type(T.FloatTensor) * scale
+    usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale/100 - (usrs_adv < 0).type(T.FloatTensor) * scale/100
     wds_adv, usrs_adv, ctx_adv = wds_adv.data, usrs_adv.data, ctx_adv.data
     return wds_adv, usrs_adv, ctx_adv
     '''
@@ -277,6 +277,7 @@ parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=100)
 parser.add_argument('--max_turns_allowed', type=int, default=3)
 parser.add_argument('--num_loader_workers', type=int, default=4)
+parser.add_argument('--adversarial_sample', type=int, default=1)
 args = parser.parse_args()
 
 dataset = UbuntuDialogDataset(args.dataroot,
@@ -372,29 +373,28 @@ while True:
         #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
         #batch, turns in a sample, embedding_dim
         usrs_b = user_emb(speaker_padded)
-        if itr % 10 == 1:
+        if itr % 10 == 1 and args.adversarial_sample == 1:
             wds_adv, usrs_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
-               context,words_padded, decoder, scale = 1e-4)
+               context,words_padded, decoder)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
         max_words = wds_b.size()[2]
         encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
-                    usrs_b.view(batch_size * max_turns, size_usr), 
-                    sentence_lengths_padded.view(-1))
-        if itr % 10 == 2:
+                usrs_b.view(batch_size * max_turns, size_usr), 
+                sentence_lengths_padded.view(-1))
+        if itr % 10 == 2 and args.adversarial_sample == 1:
             wds_adv, usrs_adv, enc_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
-                    sentence_lengths_padded,
-                    words_padded, decoder)
+                    sentence_lengths_padded, words_padded, decoder)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns)
-        if itr % 10 == 3:
+        if itr % 10 == 3 and args.adversarial_sample == 1:
             wds_adv, usrs_adv, ctx_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
@@ -412,16 +412,29 @@ while True:
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
         print(loss)
-        train_writer.add_summary(
-                TF.Summary(
-                    value=[
-                        TF.Summary.Value(tag='loss', simple_value=loss),
-                        TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                        ]
-                    ),
-                itr
-                )
         opt.step()
+        mask = mask_4d(wds_b.size(), turns , sentence_lengths_padded)
+        wds_dist = wds_b* mask
+        mask = mask_3d(usrs_b.size(), turns)
+        usrs_dist = usrs_b * mask
+        mask = mask_3d(encodings.size(), turns)
+        sent_dist = encodings * mask
+        ctx_dist = ctx * mask
+        wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
+        if itr % 10 == 5:
+            train_writer.add_summary(
+                    TF.Summary(
+                        value=[
+                            TF.Summary.Value(tag='loss', simple_value=loss),
+                            TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                            TF.Summary.Value(tag='wd_std', simple_value=np.nanstd(wds_dist)),
+                            TF.Summary.Value(tag='usr_std', simple_value=np.nanstd(usrs_dist)),
+                            TF.Summary.Value(tag='sent_std', simple_value=np.nanstd(sent_dist)),
+                            TF.Summary.Value(tag='ctx_std', simple_value=np.nanstd(ctx_dist)),
+                            ]
+                        ),
+                    itr
+                    )
         if itr % 100 == 0:
             prob = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
                                  usrs_b[:4,1:], sentence_lengths_padded[:4,1:]).squeeze()

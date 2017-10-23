@@ -64,6 +64,15 @@ def length_mask(size, length):
         weight[i, :length[i]] = 1.
     weight = tovar(weight)
     return weight
+def mask_3d(size, length):
+    length = tonumpy(length)
+    batch_size = size[0]
+    weight = T.zeros(*size)/0
+    for i in range(batch_size):
+        weight[i, :length[i],:] = 1.
+    weight = tovar(weight)
+    return weight
+
 def mask_4d(size, length1, length2):
     length1 = tonumpy(length1)
     length2 = tonumpy(length2)
