@@ -115,7 +115,6 @@ def check_grad(params):
             return False
     return True
 
-
 def clip_grad(params, clip_norm):
     norm = np.sqrt(
             sum(p.grad.data.norm() ** 2
@@ -169,7 +168,6 @@ class ConvMask(NN.Module):
         mask = length_mask((x.size()[0], x.size()[2]),convlengths).unsqueeze(1)
         x = x * mask
         return x
-
 
 class HierarchicalLogSoftmax(NN.Module):
     def __init__(self, input_size, n_classes, n_words):
@@ -233,3 +231,34 @@ class HierarchicalLogSoftmax(NN.Module):
             word_prob = word_prob.gather(1, internal_target_word_in_cls.unsqueeze(1))
 
             return word_prob
+
+
+def init_glove(word_emb, vcb, ivcb, dataroot):
+    """
+    :param word_emb: randomly initialized word embedding.
+    :param vcb: list(words) vocab.
+    :param ivcb: word -> idx
+    :return: floatTensor(Vocab size x word_emb_size)
+    """
+
+    embsize_to_txt = {50:"glove.6B.50d.txt", 100:"glove.6B.100d.txt", 200:"glove.6B.200d.txt", 300:"glove.6B.300d.txt"}
+    emb = word_emb.weight.data
+    emb_size = word_emb.weight.size(1)
+    if emb_size not in [50, 100, 200, 300]:
+        raise ValueError('Glove embedding size should be in [50,100,200,300], but is set to %d' % emb_size)
+
+    match = 0
+
+    print("Loading glove ... ")
+
+    with open(dataroot + "/" + embsize_to_txt[emb_size], 'r') as f:
+        for line in f:
+            line = line.split(" ")
+            word = line[0]
+            if word in vcb:
+                match += 1
+                vec = T.from_numpy(np.array([float(i) for i in line[1:]]))
+                emb[ivcb[word]] = vec
+
+    print("Match words in glove : " + match)
+    return emb
