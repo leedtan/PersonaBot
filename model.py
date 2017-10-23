@@ -193,7 +193,7 @@ class Decoder(NN.Module):
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, self._state_size)
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
-        return indexes, current_state
+        return val, indexes, current_state
 
     def greedyGenerate(self, context_encodings, usr_emb, word_emb, dataset):
         """
@@ -224,7 +224,7 @@ class Decoder(NN.Module):
             current_w_emb = word_emb(current_w.squeeze())
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
 
-            current_w, current_state= self.getNBestNextWords(embed_seq, current_state)
+            _, current_w, current_state= self.getNBestNextWords(embed_seq, current_state)
             output = T.cat((output, current_w.data), 1)
 
         return output
@@ -244,28 +244,50 @@ class Decoder(NN.Module):
         batch_size = context_encodings.size(0)
 
         # End of generated sentence : EOS token
-        stop_word = T.LongTensor(batch_size).fill_(dataset.index_word(EOS))
+        initial_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        stop_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
+
+        usr_emb = usr_emb.unsqueeze(1)
+        context_encodings = context_encodings.unsqueeze(1)
 
         # Viterbi tensors :
+        # dim 0 : 0 -> current word index, 1 -> previous word index leading to this word.
         s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
         s_idx_w_idx_logproba= tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
-        s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size * beam_size, state_size))
-        s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size * beam_size, state_size))
+        s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
+        s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
 
         s_idx = 0
 
-        usr_emb = usr_emb.unsqueeze(1).expand(usr_emb.size(0), beam_size, usr_emb.size(1))
-        context_encodings = context_encodings.unsqueeze(1).expand(context_encodings.size(0), beam_size, context_encodings.size(1))
+        # First step from START to first probable words :
+
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+
+        current_w_emb = word_emb(initial_word.unsqueeze(1))
+        embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
+        transition_probabilities, transition_index, current_state = self.getNBestNextWords(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
+
+        s_idx_w_idx[0,s_idx] = transition_index
+        s_idx_w_idx_logproba[s_idx] = transition_probabilities
+        s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+        s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+
+        usr_emb = usr_emb.expand(usr_emb.size(0), beam_size, usr_emb.size(2))
+        context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
 
         while s_idx < 10:
             current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-            print(embed_seq.size(), s_idx_w_idx_lstm_h.size())
-            transition_probabilities, current_state = self.getNBestNextWords(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h, s_idx_w_idx_lstm_c), beam_size)
+            transition_probabilities, transition_index,current_state = self.getNBestNextWords(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+
             transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
+            transition_index = transition_index.view(batch_size, beam_size, beam_size)
 
-            print(transition_probabilities.size(), current_state[0].size(), current_state[1].size())
+            transition_probabilities.add_(s_idx_w_idx_logproba[s_idx].unsqueeze(2).expand_as(transition_probabilities))
 
+            # From transition probability to overall probability for the path.
+            # We need the best beam_size out of beam_size x beam_size in a pytorch nice way.
             s_idx += 1
             sys.exit(1)
 
