@@ -102,6 +102,7 @@ class Context(NN.Module):
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
         embed = embed.contiguous().view(-1, context_size)
         #h = h.permute(1, 0, 2)
+
         return embed.view(batch_size, -1, context_size), (h, c)
 
 class Decoder(NN.Module):
@@ -151,11 +152,10 @@ class Decoder(NN.Module):
         size_wd = self._size_wd
         size_usr = self._size_usr
         state_size = self._state_size
-
         if initial_state is None:
             initial_state = self.zero_state(batch_size)
         #batch, turns in a sample, words in a message, embedding_dim
-        
+
         usr_emb = usr_emb.unsqueeze(2)
         usr_emb = usr_emb.expand(batch_size,maxlenbatch,maxwordsmessage,
                                  usr_emb.size()[-1])
@@ -167,6 +167,7 @@ class Decoder(NN.Module):
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
 
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
+
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
@@ -231,8 +232,7 @@ class Decoder(NN.Module):
         while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < 10:
             current_w_emb = word_emb(current_w.squeeze())
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
-
-            _, current_w, current_state = self.getNBestNextWords(embed_seq, current_state)
+            _, current_w, current_state= self.getNBestNextWords(embed_seq, current_state)
             output = T.cat((output, current_w.data), 1)
 
         return output
@@ -261,7 +261,7 @@ class Decoder(NN.Module):
         # Viterbi tensors :
         # dim 0 : 0 -> current word index, 1 -> previous word index leading to this word.
         s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
-        s_idx_w_idx_logproba = tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
+        s_idx_w_idx_logproba= tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
         s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
         s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
 
@@ -274,10 +274,9 @@ class Decoder(NN.Module):
 
         current_w_emb = word_emb(initial_word.unsqueeze(1))
         embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-        transition_probabilities, transition_index, current_state = self.getNBestNextWords(embed_seq.squeeze(),
-                                                                                           (lstm_h, lstm_c), beam_size)
+        transition_probabilities, transition_index, current_state = self.getNBestNextWords(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
 
-        s_idx_w_idx[0, s_idx] = transition_index
+        s_idx_w_idx[0,s_idx] = transition_index
         s_idx_w_idx_logproba[s_idx] = transition_probabilities
         s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
         s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
@@ -286,11 +285,9 @@ class Decoder(NN.Module):
         context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
 
         while s_idx < 10:
-            current_w_emb = word_emb(s_idx_w_idx[0, s_idx])
+            current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-            transition_probabilities, transition_index, current_state = self.getNBestNextWords(
-                embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size),
-                                                        s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+            transition_probabilities, transition_index,current_state = self.getNBestNextWords(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
 
             transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
             transition_index = transition_index.view(batch_size, beam_size, beam_size)
@@ -303,7 +300,6 @@ class Decoder(NN.Module):
             sys.exit(1)
 
         pass
-
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
@@ -543,7 +539,7 @@ while True:
             T.save(context, '%s-context-%05d' % (modelnamesave, itr))
             T.save(decoder, '%s-decoder-%05d' % (modelnamesave, itr))
         print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
-    
+
     
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
     # We need to manually unroll the LSTMs.
