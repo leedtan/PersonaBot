@@ -494,22 +494,14 @@ while True:
                     itr
                     )
 
-        # Beam search test
-        words = tonumpy(words_padded.data[0, ::2])
-        full_turns = words.shape[0]
-        sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
-        initiator = speaker_padded.data[0, 0]
-        respondent = speaker_padded.data[0, 1]
-        words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(full_turns)]
-        dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
-                                initiator, respondent, args.max_sentence_length_allowed)
-        dialogue_strings = dataset.translate_item(None, None, dialogue)
-        for d, ds, s in zip(dialogue, dialogue_strings, scores):
-            print(d, ds, s)
-
         if itr % 100 == 0:
+            greedy_responses = decoder.greedyGenerate(ctx.view(-1, size_context)[:5,:],
+                                                      usrs_b.view(-1, size_usr)[:5,:], 
+                                                      word_emb, dataset)
+            print(dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            
             prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
-                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:]).squeeze()
+                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
             mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
             Entropy = (prob.exp() * prob * -1) * mask
