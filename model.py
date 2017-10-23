@@ -86,8 +86,8 @@ class Context(NN.Module):
         init_lstm(self.rnn)
 
     def zero_state(self, batch_size):
-        lstm_h = tovar(T.zeros(self._num_layers, batch_size, self._context_size))
-        lstm_c = tovar(T.zeros(self._num_layers, batch_size, self._context_size))
+        lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
         initial_state = (lstm_h, lstm_c)
         return initial_state
 
@@ -127,8 +127,8 @@ class Decoder(NN.Module):
         init_lstm(self.rnn)
 
     def zero_state(self, batch_size):
-        lstm_h = tovar(T.zeros(self._num_layers, batch_size, self._state_size))
-        lstm_c = tovar(T.zeros(self._num_layers, batch_size, self._state_size))
+        lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
         initial_state = (lstm_h, lstm_c)
         return initial_state
 
