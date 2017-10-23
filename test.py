@@ -3,6 +3,7 @@ import torch as T
 from modules import *
 from collections import Iterable, namedtuple
 from numbers import Integral
+import numpy as np
 
 BeamItem = namedtuple('BeamItem', ['parent', 'token', 'score', 'state', 'complete'])
 one = tovar(T.LongTensor([1]))
@@ -22,7 +23,7 @@ def beam_search(dataset,
                 parent=None,
                 token=dataset.start_token_index,
                 score=0,
-                state=decoder.zero_state(one),  # n_layers, batch_size, state_size
+                state=decoder.zero_state(1),  # n_layers, batch_size, state_size
                 complete=False,
                 )
             for _ in range(beam_width)]
@@ -45,7 +46,7 @@ def beam_search(dataset,
             break
 
         # Get the decoder inputs from last beam and concatenate them into a batch
-        current_word_indices = tovar(T.LongTensor([[b.token] for b in last_beam]))
+        current_word_indices = tovar(T.LongTensor([[b.token] for b in last_beam]), volatile=True)
         decoder_states = T.cat([b.state for b in last_beam], 1)
         word_embs = word_embedder(current_word_indices).unsqueeze(1)
 
@@ -138,9 +139,8 @@ def test(dataset,
     batch-wise beam search is too complicated.
     '''
     def sentence_to_vars(_sentence):
-        sentence = tovar(T.LongTensor([_sentence]))
-        sentence_length = tovar(T.LongTensor([len(_sentence)]))
-        sentence.volatile = True
+        sentence = tovar(np.array([_sentence]), volatile=True)
+        sentence_length = tovar(T.LongTensor([len(_sentence)]), volatile=True)
         return sentence, sentence_length
 
     assert isinstance(sentences, Iterable)
@@ -149,18 +149,16 @@ def test(dataset,
     dialogue = []
     scores = []
 
-    initiator = tovar(T.LongTensor([initiator]))
-    respondent = tovar(T.LongTensor([respondent]))
-    initiator.volatile = True       # Don't save graph
-    respondent.volatile = True
+    initiator = tovar(T.LongTensor([initiator]), volatile=True)
+    respondent = tovar(T.LongTensor([respondent]), volatile=True)
 
-    initiator_embed = user_embedder(initiator.unsqueeze(1))
-    respondent_embed = user_embedder(respondent.unsqueeze(1))
+    initiator_embed = user_embedder(initiator)
+    respondent_embed = user_embedder(respondent)
     if context_state is None:
-        context_state = context_net.zero_state(one)
+        context_state = context_net.zero_state(1)
 
     _sentence = sentences[0]
-    scores = 0
+    score = 0
 
     for i in range(len(sentences)):
         dialogue.append(_sentence)

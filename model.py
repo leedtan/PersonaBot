@@ -153,7 +153,7 @@ class Decoder(NN.Module):
         state_size = self._state_size
 
         if initial_state is None:
-            initial_state = self.zero_state(batch_size)
+            initial_state = self.zero_state(batch_size * maxlenbatch)
         #batch, turns in a sample, words in a message, embedding_dim
         
         usr_emb = usr_emb.unsqueeze(2)
@@ -382,12 +382,12 @@ while True:
         # Beam search test
         words = tonumpy(words_padded.data[0, ::2])
         full_turns = words.shape[0]
-        sentence_lengths = tonumpy(sentence_lengths_padded.data[0, ::2])
+        sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
         initiator = speaker_padded.data[0, 0]
         respondent = speaker_padded.data[0, 1]
         words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(full_turns)]
-        dialogue, scores = test(dataset, enc, context, dec, word_emb, user_emb, words_nopad,
-                                initiator, respondent, args.max_sentence_length)
+        dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
+                                initiator, respondent, args.max_sentence_length_allowed)
         dialogue_strings = dataset.translate_item(None, None, dialogue)
         for d, ds, s in zip(dialogue, dialogue_strings, scores):
             print(d, ds, s)
