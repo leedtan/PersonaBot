@@ -14,9 +14,9 @@ def cuda(obj):
     else:
         return obj
 
-def tovar(*arrs):
-    tensors = [(T.Tensor(a.astype('float32')) if isinstance(a, np.ndarray) else a) for a in arrs]
-    vars_ = [T.autograd.Variable(t) for t in tensors]
+def tovar(*arrs, **kwargs):
+    tensors = [(T.from_numpy(a) if isinstance(a, np.ndarray) else a) for a in arrs]
+    vars_ = [T.autograd.Variable(t, **kwargs) for t in tensors]
     if os.getenv('USE_CUDA', None):
         vars_ = [v.cuda() for v in vars_]
     return vars_[0] if len(vars_) == 1 else vars_

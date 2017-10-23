@@ -153,7 +153,7 @@ class Decoder(NN.Module):
         size_usr = self._size_usr
         state_size = self._state_size
         if initial_state is None:
-            initial_state = self.zero_state(batch_size)
+            initial_state = self.zero_state(batch_size * maxlenbatch)
         #batch, turns in a sample, words in a message, embedding_dim
 
         usr_emb = usr_emb.unsqueeze(2)
@@ -493,8 +493,13 @@ while True:
                     )
 
         if itr % 100 == 0:
+            greedy_responses = decoder.greedyGenerate(ctx.view(-1, size_context)[:5,:],
+                                                      usrs_b.view(-1, size_usr)[:5,:], 
+                                                      word_emb, dataset)
+            print(dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            
             prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
-                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:]).squeeze()
+                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
             mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
             Entropy = (prob.exp() * prob * -1) * mask
