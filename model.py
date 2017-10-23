@@ -84,15 +84,19 @@ class Context(NN.Module):
                 )
         init_lstm(self.rnn)
 
+    def zero_state(self, batch_size):
+        lstm_h = tovar(T.zeros(self._num_layers, batch_size, self._context_size))
+        lstm_c = tovar(T.zeros(self._num_layers, batch_size, self._context_size))
+        initial_state = (lstm_h, lstm_c)
+        return initial_state
+
     def forward(self, sent_encodings, length, initial_state=None):
         num_layers = self._num_layers
         batch_size = sent_encodings.size()[0]
         context_size = self._context_size
         
         if initial_state is None:
-            lstm_h = tovar(T.zeros(num_layers, batch_size, context_size))
-            lstm_c = tovar(T.zeros(num_layers, batch_size, context_size))
-            initial_state = (lstm_h, lstm_c)
+            initial_state = self.zero_state(batch_size)
         sent_encodings = sent_encodings.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
         embed = embed.contiguous().view(-1, context_size)

@@ -8,6 +8,7 @@ from collections import Counter
 
 EOS = '<eos>'
 START = '<start>'
+UNKNOWN = '<unknown>'
 
 class UbuntuDialogDataset(Dataset):
     def __init__(self,
@@ -61,7 +62,7 @@ class UbuntuDialogDataset(Dataset):
             self._vocab = [''] + list(list(zip(*self._wordcount.most_common(vocab_size)))[0])
         else:
             self._vocab = [''] + [w for w, c in self._wordcount.items() if c >= min_word_occurrence]
-
+        self._vocab.append(START)
         self._vocab.append(EOS)
 
         if not min_user_occurrence:
