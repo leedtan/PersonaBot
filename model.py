@@ -29,7 +29,6 @@ np.set_printoptions(suppress=True)
 from collections import Counter
 from data_loader_stage1 import *
 
-from modules import *
 from adv import *
 
 
@@ -300,7 +299,7 @@ while True:
         #batch, turns in a sample, embedding_dim
         usrs_b = user_emb(speaker_padded)
         if itr % 10 == 1 and args.adversarial_sample == 1:
-            wds_adv, usrs_adv = adversarial_word_users(wds_b, usrs_b, turns,
+            wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
                context,words_padded, decoder)
@@ -311,8 +310,8 @@ while True:
         encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
-        if itr % 10 == 2 and args.adversarial_sample == 1:
-            wds_adv, usrs_adv, enc_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
+        if itr % 10 == 4 and args.adversarial_sample == 1:
+            wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
@@ -320,8 +319,8 @@ while True:
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns)
-        if itr % 10 == 3 and args.adversarial_sample == 1:
-            wds_adv, usrs_adv, ctx_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
+        if itr % 10 == 7 and args.adversarial_sample == 1:
+            wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
@@ -339,6 +338,15 @@ while True:
         loss = loss[0]
         print(loss)
         opt.step()
+        if itr % 10 == 1 and args.adversarial_sample == 1:
+            train_writer.add_summary(
+                TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
+        if itr % 10 == 4 and args.adversarial_sample == 1:
+            train_writer.add_summary(
+                TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
+        if itr % 10 == 7 and args.adversarial_sample == 1:
+            train_writer.add_summary(
+                TF.Summary(value=[TF.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
         mask = mask_4d(wds_b.size(), turns , sentence_lengths_padded)
         wds_dist = wds_b* mask
         mask = mask_3d(usrs_b.size(), turns)
@@ -347,7 +355,7 @@ while True:
         sent_dist = encodings * mask
         ctx_dist = ctx * mask
         wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
-        if itr % 10 == 5:
+        if itr % 10 == 9:
             train_writer.add_summary(
                     TF.Summary(
                         value=[

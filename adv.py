@@ -1,4 +1,4 @@
-
+from modules import *
 import torch as T
 
 def adversarial_word_users(wds_b, usrs_b, turns,
@@ -25,7 +25,7 @@ def adversarial_word_users(wds_b, usrs_b, turns,
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale - (wds_adv < 0).type(T.FloatTensor) * scale
     usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale - (usrs_adv < 0).type(T.FloatTensor) * scale
     wds_adv, usrs_adv = wds_adv.data, usrs_adv.data
-    return wds_adv, usrs_adv
+    return wds_adv, usrs_adv, tonumpy(loss)[0]
     
 def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
                       max_turns, context, turns, sentence_lengths_padded,
@@ -45,7 +45,7 @@ def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale - (wds_adv < 0).type(T.FloatTensor) * scale
     usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale - (usrs_adv < 0).type(T.FloatTensor) * scale
     wds_adv, usrs_adv, enc_adv = wds_adv.data, usrs_adv.data, enc_adv.data
-    return wds_adv, usrs_adv, enc_adv
+    return wds_adv, usrs_adv, enc_adv, tonumpy(loss)[0]
     
 def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
                       words_padded, decoder, scale=1e-7):
@@ -61,7 +61,7 @@ def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale*100 - (wds_adv < 0).type(T.FloatTensor) * scale*100
     usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale*100 - (usrs_adv < 0).type(T.FloatTensor) * scale*100
     wds_adv, usrs_adv, ctx_adv = wds_adv.data, usrs_adv.data, ctx_adv.data
-    return wds_adv, usrs_adv, ctx_adv
+    return wds_adv, usrs_adv, ctx_adv, tonumpy(loss)[0]
     '''
     cls, _, _, nframes = d(data, data_len, embed_d)
 
