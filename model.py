@@ -30,7 +30,7 @@ from collections import Counter
 from data_loader_stage1 import *
 
 from adv import *
-from test import test
+#from test import test
 
 
 class Encoder(NN.Module):
@@ -373,7 +373,7 @@ decoder_size_sentence = args.decoder_size_sentence
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
-word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
+#word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
 context = cuda(Context(size_sentence, size_context, num_layers = args.context_layers))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
