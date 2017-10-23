@@ -218,7 +218,6 @@ class Decoder(NN.Module):
         batch_size = context_encodings.size(0)
         lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
         lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
-        print(lstm_h.size())
         current_state = (lstm_h, lstm_c)
 
         # Initial word of response : Start token
@@ -232,7 +231,6 @@ class Decoder(NN.Module):
         while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < 10:
             current_w_emb = word_emb(current_w.squeeze())
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
-
             _, current_w, current_state= self.getNBestNextWords(embed_seq, current_state)
             output = T.cat((output, current_w.data), 1)
 
@@ -302,10 +300,9 @@ class Decoder(NN.Module):
 
         pass
 
-
-
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
+parser.add_argument('--gloveroot', type=str,default='data', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
@@ -315,7 +312,7 @@ parser.add_argument('--size_context', type=int, default=64)
 parser.add_argument('--size_sentence', type=int, default=64)
 parser.add_argument('--decoder_size_sentence', type=int, default=64)
 parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=64)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
@@ -376,6 +373,7 @@ decoder_size_sentence = args.decoder_size_sentence
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
+word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
 context = cuda(Context(size_sentence, size_context, num_layers = args.context_layers))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
