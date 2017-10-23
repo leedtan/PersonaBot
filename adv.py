@@ -20,7 +20,7 @@ def adversarial_word_users(wds_b, usrs_b, turns,
                              usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
     
     loss = -log_prob
-    wds_adv, usrs_adv = T.autograd.grad(loss, [wds_b, usrs_b], grad_outputs=T.ones(loss.size()), 
+    wds_adv, usrs_adv = T.autograd.grad(loss, [wds_b, usrs_b], grad_outputs=cuda(T.ones(loss.size())), 
                            create_graph=True, retain_graph=True, only_inputs=True)
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale - (wds_adv < 0).type(T.FloatTensor) * scale
     usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale - (usrs_adv < 0).type(T.FloatTensor) * scale
@@ -39,7 +39,7 @@ def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
     _, log_prob, _ = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
                              usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
     loss = -log_prob
-    wds_adv, usrs_adv, enc_adv = T.autograd.grad(loss, [wds_b,usrs_b,encodings], grad_outputs=T.ones(loss.size()), 
+    wds_adv, usrs_adv, enc_adv = T.autograd.grad(loss, [wds_b,usrs_b,encodings], grad_outputs=cuda(T.ones(loss.size())), 
                            create_graph=True, retain_graph=True, only_inputs=True)
     enc_adv = (enc_adv > 0).type(T.FloatTensor) * scale - (enc_adv < 0).type(T.FloatTensor) * scale
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale - (wds_adv < 0).type(T.FloatTensor) * scale
@@ -55,7 +55,7 @@ def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
     _, log_prob, _ = decoder(ctx[:,:-1:], wds_b[:,1:,:max_output_words],
                              usrs_b[:,1:], sentence_lengths_padded[:,1:], words_flat)
     loss = -log_prob
-    wds_adv, usrs_adv, ctx_adv = T.autograd.grad(loss, [wds_b,usrs_b,ctx], grad_outputs=T.ones(loss.size()), 
+    wds_adv, usrs_adv, ctx_adv = T.autograd.grad(loss, [wds_b,usrs_b,ctx], grad_outputs=cuda(T.ones(loss.size())), 
                            create_graph=True, retain_graph=True, only_inputs=True)
     ctx_adv = (ctx_adv > 0).type(T.FloatTensor) * scale - (ctx_adv < 0).type(T.FloatTensor) * scale
     wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale*100 - (wds_adv < 0).type(T.FloatTensor) * scale*100
