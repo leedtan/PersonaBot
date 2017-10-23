@@ -188,6 +188,122 @@ class Decoder(NN.Module):
             log_prob = out.sum() / mask.sum()
             return out, log_prob, (h, c)
 
+    def getNBestNextWords(self, embed_seq, current_state, n=1):
+        """
+
+        :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
+        :param current_state: num_layers * num_directions x batch_size x hidden_size
+        :param n: int, return top n words.
+        :return: batch_size x n
+        """
+        batch_size = embed_seq.size(0)
+        embed, current_state = self.rnn(embed_seq.unsqueeze(0), current_state)
+        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, self._state_size)
+        out = self.softmax(embed.squeeze())
+        val, indexes = out.topk(n, 1)
+        return val, indexes, current_state
+
+    def greedyGenerate(self, context_encodings, usr_emb, word_emb, dataset):
+        """
+        How to require_grad=False ?
+        :param context_encodings: (batch_size x context_size)
+        :param word_emb:  idx to vector word embedder.
+        :param usr_emb: (batch_size x usr_emb_size)
+        :return: response : (batch_size x max_response_length)
+        """
+
+        num_layers = self._num_layers
+        state_size = self._state_size
+        batch_size = context_encodings.size(0)
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+        print(lstm_h.size())
+        current_state = (lstm_h, lstm_c)
+
+        # Initial word of response : Start token
+        init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        # End of generated sentence : EOS token
+        stop_word = T.LongTensor(batch_size).fill_(dataset.index_word(EOS))
+
+        current_w = init_word
+        output = current_w.data.unsqueeze(1)
+
+        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < 10:
+            current_w_emb = word_emb(current_w.squeeze())
+            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
+
+            _, current_w, current_state = self.getNBestNextWords(embed_seq, current_state)
+            output = T.cat((output, current_w.data), 1)
+
+        return output
+
+    def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset, beam_size=13):
+        """
+        :param context_encodings: (batch_size x context_size)
+        :param usr_emb: (batch_size x usr_emb_size)
+        :param word_emb:  idx to vector word embedder.
+        :param dataset:  dataset to get EOS/START tokens ids
+        :param beam_size:  width of beam search.
+        :return: response : (batch_size x max_response_length)
+        """
+
+        num_layers = self._num_layers
+        state_size = self._state_size
+        batch_size = context_encodings.size(0)
+
+        # End of generated sentence : EOS token
+        initial_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        stop_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
+
+        usr_emb = usr_emb.unsqueeze(1)
+        context_encodings = context_encodings.unsqueeze(1)
+
+        # Viterbi tensors :
+        # dim 0 : 0 -> current word index, 1 -> previous word index leading to this word.
+        s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
+        s_idx_w_idx_logproba = tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
+        s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
+        s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
+
+        s_idx = 0
+
+        # First step from START to first probable words :
+
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+
+        current_w_emb = word_emb(initial_word.unsqueeze(1))
+        embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
+        transition_probabilities, transition_index, current_state = self.getNBestNextWords(embed_seq.squeeze(),
+                                                                                           (lstm_h, lstm_c), beam_size)
+
+        s_idx_w_idx[0, s_idx] = transition_index
+        s_idx_w_idx_logproba[s_idx] = transition_probabilities
+        s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+        s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+
+        usr_emb = usr_emb.expand(usr_emb.size(0), beam_size, usr_emb.size(2))
+        context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
+
+        while s_idx < 10:
+            current_w_emb = word_emb(s_idx_w_idx[0, s_idx])
+            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
+            transition_probabilities, transition_index, current_state = self.getNBestNextWords(
+                embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size),
+                                                        s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+
+            transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
+            transition_index = transition_index.view(batch_size, beam_size, beam_size)
+
+            transition_probabilities.add_(s_idx_w_idx_logproba[s_idx].unsqueeze(2).expand_as(transition_probabilities))
+
+            # From transition probability to overall probability for the path.
+            # We need the best beam_size out of beam_size x beam_size in a pytorch nice way.
+            s_idx += 1
+            sys.exit(1)
+
+        pass
+
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
