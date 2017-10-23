@@ -5,7 +5,6 @@ def adversarial_word_users(wds_b, usrs_b, turns,
            size_wd,batch_size,size_usr,
            sentence_lengths_padded, enc, 
            context,words_padded, decoder, scale = 1e-5):
-    usrs_b = user_emb(speaker_padded)
         
     max_turns = turns.max()
     max_words = wds_b.size()[2]
@@ -49,7 +48,7 @@ def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
     return wds_adv, usrs_adv, enc_adv
     
 def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
-                      words_padded, decoder, scale=1e-5):
+                      words_padded, decoder, scale=1e-7):
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
     # Training:
@@ -59,8 +58,8 @@ def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
     wds_adv, usrs_adv, ctx_adv = T.autograd.grad(loss, [wds_b,usrs_b,ctx], grad_outputs=T.ones(loss.size()), 
                            create_graph=True, retain_graph=True, only_inputs=True)
     ctx_adv = (ctx_adv > 0).type(T.FloatTensor) * scale - (ctx_adv < 0).type(T.FloatTensor) * scale
-    wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale - (wds_adv < 0).type(T.FloatTensor) * scale
-    usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale - (usrs_adv < 0).type(T.FloatTensor) * scale
+    wds_adv = (wds_adv > 0).type(T.FloatTensor) * scale*100 - (wds_adv < 0).type(T.FloatTensor) * scale*100
+    usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale*100 - (usrs_adv < 0).type(T.FloatTensor) * scale*100
     wds_adv, usrs_adv, ctx_adv = wds_adv.data, usrs_adv.data, ctx_adv.data
     return wds_adv, usrs_adv, ctx_adv
     '''
