@@ -475,6 +475,7 @@ while True:
         usrs_dist = usrs_b * mask
         mask = mask_3d(encodings.size(), turns)
         sent_dist = encodings * mask
+        mask = mask_3d(ctx.size(), turns)
         ctx_dist = ctx * mask
         wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
         if itr % 10 == 9:
