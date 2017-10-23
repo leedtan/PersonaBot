@@ -223,7 +223,7 @@ class Decoder(NN.Module):
         # Initial word of response : Start token
         init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
         # End of generated sentence : EOS token
-        stop_word = T.LongTensor(batch_size).fill_(dataset.index_word(EOS))
+        stop_word = cuda(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
 
         current_w = init_word
         output = current_w.data.unsqueeze(1)
