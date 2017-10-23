@@ -64,6 +64,25 @@ def length_mask(size, length):
         weight[i, :length[i]] = 1.
     weight = tovar(weight)
     return weight
+def mask_3d(size, length):
+    length = tonumpy(length)
+    batch_size = size[0]
+    weight = T.zeros(*size)/0
+    for i in range(batch_size):
+        weight[i, :length[i],:] = 1.
+    weight = tovar(weight)
+    return weight
+
+def mask_4d(size, length1, length2):
+    length1 = tonumpy(length1)
+    length2 = tonumpy(length2)
+    batch_size = size[0]
+    weight = T.zeros(*size)/0
+    for i in range(batch_size):
+        for j in range(length1[i]):
+            weight[i, :length1[i], :length2[i,j],:] = 1.
+    weight = tovar(weight)
+    return weight
 
 
 def dynamic_rnn(rnn, seq, length, initial_state):
@@ -176,8 +195,8 @@ class HierarchicalLogSoftmax(NN.Module):
         perm = np.random.permutation(n_words)
         mapping_dict = dict(zip(range(n_words), perm))
         inv_mapping_dict = dict(zip(perm, range(n_words)))
-        self.mapping = T.LongTensor(np.array([mapping_dict[i] for i in range(n_words)], dtype='int64'))
-        self.inv_mapping = T.LongTensor(np.array([inv_mapping_dict[i] for i in range(n_words)], dtype='int64'))
+        self.mapping = cuda(T.LongTensor(np.array([mapping_dict[i] for i in range(n_words)], dtype='int64')))
+        self.inv_mapping = cuda(T.LongTensor(np.array([inv_mapping_dict[i] for i in range(n_words)], dtype='int64')))
 
     def forward(self, x, target=None):
         '''

@@ -8,6 +8,7 @@ from collections import Counter
 
 EOS = '<eos>'
 START = '<start>'
+UNKNOWN = '<unknown>'
 
 class UbuntuDialogDataset(Dataset):
     def __init__(self,
@@ -37,6 +38,7 @@ class UbuntuDialogDataset(Dataset):
         as well.
         '''
         self._pkls = []
+        self._max_turns_allowed = max_turns_allowed
         with open(turncount_pkl, 'rb') as f:
             self._turncount = pickle.load(f)
         with open(max_sentence_lengths_pkl, 'rb') as f:
@@ -50,7 +52,6 @@ class UbuntuDialogDataset(Dataset):
             pkls = [os.path.join(root, curdir, f)
                     for f in files
                     if f.endswith('.pkl') and
-                    self._turncount[os.path.join(curdir, f)] <= max_turns_allowed and
                     self._max_sentence_lengths[os.path.join(curdir, f)] <= max_sentence_length_allowed]
             self._pkls.extend(pkls)
 
@@ -61,7 +62,7 @@ class UbuntuDialogDataset(Dataset):
             self._vocab = [''] + list(list(zip(*self._wordcount.most_common(vocab_size)))[0])
         else:
             self._vocab = [''] + [w for w, c in self._wordcount.items() if c >= min_word_occurrence]
-
+        self._vocab.append(START)
         self._vocab.append(EOS)
 
         if not min_user_occurrence:
@@ -109,6 +110,10 @@ class UbuntuDialogDataset(Dataset):
         addressee_idx = [self.index_user(u) for u in item['addressee']]
         speaker_idx = [self.index_user(u) for u in item['speaker']]
         word_idx = [[self.index_word(w) for w in s] for s in item['words']]
+
+        addressee_idx = addressee_idx[:self._max_turns_allowed]
+        speaker_idx = speaker_idx[:self._max_turns_allowed]
+        word_idx = word_idx[:self._max_turns_allowed]
         return addressee_idx, speaker_idx, word_idx
 
     def translate_item(self, addressee_idx, speaker_idx, word_idx):
@@ -130,6 +135,14 @@ class UbuntuDialogDataset(Dataset):
     @property
     def unknown_word_index(self):
         return len(self._vocab)
+
+    @property
+    def start_token_index(self):
+        return self.index_word(START)
+
+    @property
+    def end_token_index(self):
+        return self.index_word(EOS)
 
     @property
     def unknown_user_index(self):
@@ -155,7 +168,7 @@ class UbuntuDialogDataset(Dataset):
         if 0 <= i < len(self._vocab):       # padding already in self._vocab
             return self._vocab[i]
         elif i == self.unknown_word_index:
-            return '<unknown>'
+            return UNKNOWN
         else:
             raise ValueError('index out of range')
 
@@ -163,7 +176,7 @@ class UbuntuDialogDataset(Dataset):
         if 0 <= i < len(self._users):       # null already in self._users
             return self._users[i]
         elif i == self.unknown_user_index:
-            return '<unknown>'
+            return UNKNOWN
         else:
             raise ValueError('index out of range')
 
