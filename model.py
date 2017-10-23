@@ -392,11 +392,11 @@ epoch = 0
 
 if modelnameload:
     if len(modelnameload) > 0:
-        user_emb = T.load('%s-user_emb-%05d' % (modelnameload, args.loaditerations))
-        word_emb = T.load('%s-word_emb-%05d' % (modelnameload, args.loaditerations))
-        enc = T.load('%s-enc-%05d' % (modelnameload, args.loaditerations))
-        context = T.load('%s-context-%05d' % (modelnameload, args.loaditerations))
-        decoder = T.load('%s-decoder-%05d' % (modelnameload, args.loaditerations))
+        user_emb = T.load('%s-user_emb-%07d' % (modelnameload, args.loaditerations))
+        word_emb = T.load('%s-word_emb-%07d' % (modelnameload, args.loaditerations))
+        enc = T.load('%s-enc-%07d' % (modelnameload, args.loaditerations))
+        context = T.load('%s-context-%07d' % (modelnameload, args.loaditerations))
+        decoder = T.load('%s-decoder-%07d' % (modelnameload, args.loaditerations))
 
 while True:
     epoch += 1
@@ -528,11 +528,11 @@ while True:
                     ),
                 itr
                 )
-            T.save(user_emb, '%s-user_emb-%05d' % (modelnamesave, itr))
-            T.save(word_emb, '%s-word_emb-%05d' % (modelnamesave, itr))
-            T.save(enc, '%s-enc-%05d' % (modelnamesave, itr))
-            T.save(context, '%s-context-%05d' % (modelnamesave, itr))
-            T.save(decoder, '%s-decoder-%05d' % (modelnamesave, itr))
+            T.save(user_emb, '%s-user_emb-%07d' % (modelnamesave, itr))
+            T.save(word_emb, '%s-word_emb-%07d' % (modelnamesave, itr))
+            T.save(enc, '%s-enc-%07d' % (modelnamesave, itr))
+            T.save(context, '%s-context-%07d' % (modelnamesave, itr))
+            T.save(decoder, '%s-decoder-%07d' % (modelnamesave, itr))
         print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
 
     
