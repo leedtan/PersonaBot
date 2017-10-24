@@ -105,10 +105,12 @@ class Context(NN.Module):
         return embed.view(batch_size, -1, context_size), (h, c)
 
 class Decoder(NN.Module):
-    def __init__(self,size_usr, size_wd, context_size, num_words, 
+    def __init__(self,size_usr, size_wd, context_size, num_words, max_len_generated ,beam_size,
                  state_size = None, num_layers=1):
         NN.Module.__init__(self)
         self._num_words = num_words
+        self._beam_size = beam_size
+        self._max_len_generated = max_len_generated
         self._context_size = context_size
         self._size_wd = size_wd
         self._size_usr = size_usr
@@ -188,7 +190,7 @@ class Decoder(NN.Module):
             log_prob = out.sum() / mask.sum()
             return out, log_prob, (h, c)
 
-    def getNBestNextWords(self, embed_seq, current_state, n=1):
+    def get_n_best_next_words(self, embed_seq, current_state, n=1):
         """
 
         :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
@@ -203,6 +205,19 @@ class Decoder(NN.Module):
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
 
+    def mat_idx_vector_to_vector(self, mat, vec):
+        """
+
+        :param mat: a matrix of size l lines x m cols
+        :param vec: vector of size l
+        :return: vector made of M[i, l[i]] i in [1,l]
+        """
+        out = T.LongTensor(mat.size(0))
+        for i in range(mat.size(0)):
+            out[i] = mat[i,vec[i]]
+
+        return out
+
     def greedyGenerate(self, context_encodings, usr_emb, word_emb, dataset):
         """
         How to require_grad=False ?
@@ -214,6 +229,8 @@ class Decoder(NN.Module):
 
         num_layers = self._num_layers
         state_size = self._state_size
+        max_len_generated = self._max_len_generated
+
         batch_size = context_encodings.size(0)
         lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
         lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
@@ -227,15 +244,15 @@ class Decoder(NN.Module):
         current_w = init_word
         output = current_w.data.unsqueeze(1)
 
-        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < 10:
+        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
             current_w_emb = word_emb(current_w.squeeze())
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
-            _, current_w, current_state= self.getNBestNextWords(embed_seq, current_state)
+            _, current_w, current_state= self.get_n_best_next_words(embed_seq, current_state)
             output = T.cat((output, current_w.data), 1)
 
         return output
 
-    def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset, beam_size=13):
+    def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset):
         """
         :param context_encodings: (batch_size x context_size)
         :param usr_emb: (batch_size x usr_emb_size)
@@ -245,6 +262,8 @@ class Decoder(NN.Module):
         :return: response : (batch_size x max_response_length)
         """
 
+        beam_size = self._beam_size
+        max_len_generated = self._max_len_generated
         num_layers = self._num_layers
         state_size = self._state_size
         batch_size = context_encodings.size(0)
@@ -263,8 +282,6 @@ class Decoder(NN.Module):
         s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
         s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
 
-        s_idx = 0
-
         # First step from START to first probable words :
 
         lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
@@ -272,32 +289,71 @@ class Decoder(NN.Module):
 
         current_w_emb = word_emb(initial_word.unsqueeze(1))
         embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-        transition_probabilities, transition_index, current_state = self.getNBestNextWords(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
-
-        s_idx_w_idx[0,s_idx] = transition_index
-        s_idx_w_idx_logproba[s_idx] = transition_probabilities
+        transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
+        next_wrd = transition_index.unsqueeze(0)
+        prev_idx =  tovar(T.zeros(transition_index.size()).long().unsqueeze(0))
+        nxt_s_idx_w_idx = T.cat((next_wrd, prev_idx), 0)
+        nxt_s_idx_w_idx = nxt_s_idx_w_idx.unsqueeze(1)
+        s_idx_w_idx= T.cat((s_idx_w_idx, nxt_s_idx_w_idx), 1)
+        s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, transition_probabilities.unsqueeze(0)), 0)
         s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
         s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
 
         usr_emb = usr_emb.expand(usr_emb.size(0), beam_size, usr_emb.size(2))
         context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
 
-        while s_idx < 10:
+        s_idx = 1
+
+        # Add constraint argmax probability is end word for all batch.
+
+        while s_idx < max_len_generated - 1:
             current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-            transition_probabilities, transition_index,current_state = self.getNBestNextWords(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+            transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+
+            transition_index = transition_index.view(batch_size, -1)
 
             transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
-            transition_index = transition_index.view(batch_size, beam_size, beam_size)
-
             transition_probabilities.add_(s_idx_w_idx_logproba[s_idx].unsqueeze(2).expand_as(transition_probabilities))
+            transition_probabilities = transition_probabilities.view(batch_size, -1)
 
-            # From transition probability to overall probability for the path.
-            # We need the best beam_size out of beam_size x beam_size in a pytorch nice way.
+            lstm_h = current_state[0].view(num_layers, -1, beam_size, state_size)
+            lstm_c = current_state[1].view(num_layers, -1, beam_size, state_size)
+
+            best_transition_probabilities, best_transition_indexes = transition_probabilities.topk(beam_size, 1)
+            next_words = T.LongTensor(best_transition_indexes.size())
+
+            best_transition_indexes = best_transition_indexes.data
+            best_transition_return_index = best_transition_indexes / 13
+
+            for i in range(best_transition_indexes.size(0)):
+                next_words[i] = transition_index[i][best_transition_indexes[i]].data
+                s_idx_w_idx_lstm_h[:,i,:,:].data = lstm_h[:,:,best_transition_return_index[i],:][:,i,:,:].data
+                s_idx_w_idx_lstm_c[:, i, :, :].data = lstm_c[:, :, best_transition_return_index[i], :][:, i, :, :].data
+
+            s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, best_transition_probabilities.unsqueeze(0)), 0)
+
+            best_transition_indexes = best_transition_indexes.unsqueeze(0).unsqueeze(0)
+            next_words = next_words.unsqueeze(0).unsqueeze(0)
+            s_idx_w_idx = T.cat((s_idx_w_idx, T.cat((next_words, best_transition_indexes / beam_size), 0)), 1)
+
             s_idx += 1
-            sys.exit(1)
 
-        pass
+        # Now we go through the viterbi matrix backward to get the best sentence :
+
+        s_idx_w_idx = s_idx_w_idx.data
+        answers = T.zeros(batch_size, s_idx + 1).long()
+
+        best_words, best_idx = s_idx_w_idx[0, s_idx].max(1)
+        idx_previous = self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], best_idx)
+        answers[:, s_idx] = best_words
+
+        while s_idx >= 1:
+            s_idx -= 1
+            answers[:, s_idx] = self.mat_idx_vector_to_vector(s_idx_w_idx[0,s_idx], idx_previous)
+            idx_previous =  self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], idx_previous)
+
+        return answers
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
@@ -307,20 +363,22 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=2)
 parser.add_argument('--context_layers', type=int, default=2)
-parser.add_argument('--size_context', type=int, default=64)
+parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=32)
 parser.add_argument('--decoder_size_sentence', type=int, default=32)
+parser.add_argument('--decoder_beam_size', type=int, default=16)
+parser.add_argument('--decoder_max_generated', type=int, default=18)
 parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=32)
-parser.add_argument('--batchsize', type=int, default=32)
+parser.add_argument('--size_wd', type=int, default=50)
+parser.add_argument('--batchsize', type=int, default=16)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=100)
-parser.add_argument('--max_turns_allowed', type=int, default=6)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=64)
+parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 args = parser.parse_args()
@@ -369,6 +427,8 @@ size_wd = args.size_wd
 size_sentence = args.size_sentence
 size_context = args.size_context
 decoder_size_sentence = args.decoder_size_sentence
+decoder_beam_size = args.decoder_beam_size
+decoder_max_generated = args.decoder_max_generated
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
@@ -376,7 +436,7 @@ word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
 context = cuda(Context(size_sentence, size_context, num_layers = args.context_layers))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
-                       decoder_size_sentence, num_layers = args.decoder_layers))
+                       decoder_max_generated, decoder_beam_size, state_size=decoder_size_sentence, num_layers = args.decoder_layers))
 
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
@@ -387,7 +447,12 @@ dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.nu
 itr = args.loaditerations
 epoch = 0
 usr_std = wd_std = sent_std = ctx_std = 1e-7
-
+adv_emb_diffs = []
+adv_sent_diffs = []
+adv_ctx_diffs = []
+adv_emb_scales = []
+adv_sent_scales = []
+adv_ctx_scales = []
 if modelnameload:
     if len(modelnameload) > 0:
         user_emb = T.load('%s-user_emb-%07d' % (modelnameload, args.loaditerations))
@@ -395,10 +460,13 @@ if modelnameload:
         enc = T.load('%s-enc-%07d' % (modelnameload, args.loaditerations))
         context = T.load('%s-context-%07d' % (modelnameload, args.loaditerations))
         decoder = T.load('%s-decoder-%07d' % (modelnameload, args.loaditerations))
-
+adv_style = 0
+scatter_entropy_freq = 200
 while True:
     epoch += 1
     for item in dataloader:
+        if itr % scatter_entropy_freq == 0:
+            adv_style = 1 - adv_style
         itr += 1
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
@@ -420,11 +488,13 @@ while True:
         #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
         #batch, turns in a sample, embedding_dim
         usrs_b = user_emb(speaker_padded)
+
         if itr % 10 == 1 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
-               context,words_padded, decoder, usr_std, wd_std)
+               context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
@@ -433,19 +503,21 @@ while True:
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
         if itr % 10 == 4 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std)
+                    usr_std, wd_std, sent_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns)
         if itr % 10 == 7 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
-                      usr_std, wd_std, ctx_std)
+                      usr_std, wd_std, ctx_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
@@ -460,15 +532,20 @@ while True:
         grad_norm = clip_grad(params, args.gradclip)
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
-        print(loss)
         opt.step()
         if itr % 10 == 1 and args.adversarial_sample == 1:
+            adv_emb_diffs.append(loss_adv - loss)
+            adv_emb_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 4 and args.adversarial_sample == 1:
+            adv_sent_diffs.append(loss_adv - loss)
+            adv_sent_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 7 and args.adversarial_sample == 1:
+            adv_ctx_diffs.append(loss_adv - loss)
+            adv_ctx_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
         mask = mask_4d(wds_b.size(), turns , sentence_lengths_padded)
@@ -510,11 +587,11 @@ while True:
         for d, ds, s in zip(dialogue, dialogue_strings, scores):
             print(ds, d, s)
 
-        if itr % 100 == 0:
-            prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
-                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
+        if itr % scatter_entropy_freq == 0:
+            prob, _ = decoder(ctx[:3,:-1], wds_b[:3,1:,:max_output_words],
+                                 usrs_b[:3,1:], sentence_lengths_padded[:3,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-            mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
+            mask = mask_4d(prob.size(), turns[:3] -1 , sentence_lengths_padded[:3,1:])
             Entropy = (prob.exp() * prob * -1) * mask
             Entropy_per_word = Entropy.sum(-1)
             Entropy_per_word = tonumpy(Entropy_per_word)[0]
@@ -539,18 +616,32 @@ while True:
                     ),
                 itr
                 )
+            if args.adversarial_sample == 1:
+                add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
+                                scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
+                                names=['embeddings', 'sentence', 'context'], itr = itr, 
+                                log_dir = args.logdir, tag = 'scatterplot', style=adv_style)
+                adv_emb_diffs = []
+                adv_sent_diffs = []
+                adv_ctx_diffs = []
+                adv_emb_scales = []
+                adv_sent_scales = []
+                adv_ctx_scales = []
         
-        if itr % 1000 == 0:
-            greedy_responses = decoder.greedyGenerate(ctx.view(-1, size_context)[:5,:],
+        if itr % 1000 == 5:
+            greedy_responses = decoder.viterbiGenerate(ctx.view(-1, size_context)[:5,:],
                                                       usrs_b.view(-1, size_usr)[:5,:], 
                                                       word_emb, dataset)
-            print(dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            print('GENERATED:',dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:5,0,:])))
+        if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%07d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%07d' % (modelnamesave, itr))
             T.save(enc, '%s-enc-%07d' % (modelnamesave, itr))
             T.save(context, '%s-context-%07d' % (modelnamesave, itr))
             T.save(decoder, '%s-decoder-%07d' % (modelnamesave, itr))
-        print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
+        if itr % 10 == 0:
+            print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
 
     
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
