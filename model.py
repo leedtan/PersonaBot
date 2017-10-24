@@ -493,12 +493,7 @@ while True:
                     itr
                     )
 
-        if itr % 1000 == 0:
-            greedy_responses = decoder.greedyGenerate(ctx.view(-1, size_context)[:5,:],
-                                                      usrs_b.view(-1, size_usr)[:5,:], 
-                                                      word_emb, dataset)
-            print(dataset.translate_item(None, None, tonumpy(greedy_responses)))
-            
+        if itr % 100 == 0:
             prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
                                  usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
@@ -527,6 +522,12 @@ while True:
                     ),
                 itr
                 )
+        
+        if itr % 1000 == 0:
+            greedy_responses = decoder.greedyGenerate(ctx.view(-1, size_context)[:5,:],
+                                                      usrs_b.view(-1, size_usr)[:5,:], 
+                                                      word_emb, dataset)
+            print(dataset.translate_item(None, None, tonumpy(greedy_responses)))
             T.save(user_emb, '%s-user_emb-%07d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%07d' % (modelnamesave, itr))
             T.save(enc, '%s-enc-%07d' % (modelnamesave, itr))
