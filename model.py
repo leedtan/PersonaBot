@@ -516,10 +516,10 @@ while True:
                     )
 
         if itr % scatter_entropy_freq == 0:
-            prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
-                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
+            prob, _ = decoder(ctx[:3,:-1], wds_b[:3,1:,:max_output_words],
+                                 usrs_b[:3,1:], sentence_lengths_padded[:3,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-            mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
+            mask = mask_4d(prob.size(), turns[:3] -1 , sentence_lengths_padded[:3,1:])
             Entropy = (prob.exp() * prob * -1) * mask
             Entropy_per_word = Entropy.sum(-1)
             Entropy_per_word = tonumpy(Entropy_per_word)[0]
