@@ -4,7 +4,7 @@ import torch as T
 def adversarial_word_users(wds_b, usrs_b, turns,
            size_wd,batch_size,size_usr,
            sentence_lengths_padded, enc, 
-           context,words_padded, decoder, usr_std, wd_std, scale=1e-2):
+           context,words_padded, decoder, usr_std, wd_std, scale=1e-3):
         
     max_turns = turns.max()
     max_words = wds_b.size()[2]
@@ -31,7 +31,7 @@ def adversarial_word_users(wds_b, usrs_b, turns,
     
 def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
                       max_turns, context, turns, sentence_lengths_padded,
-                      words_padded, decoder, usr_std, wd_std, sent_std, scale=1e-2):
+                      words_padded, decoder, usr_std, wd_std, sent_std, scale=1e-3):
     
     encodings = encodings.view(batch_size, max_turns, -1)
     ctx, _ = context(encodings, turns)
@@ -53,7 +53,7 @@ def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
     return wds_adv, usrs_adv, enc_adv, tonumpy(loss)[0]
     
 def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
-                      words_padded, decoder, usr_std, wd_std, ctx_std, scale=1e-2):
+                      words_padded, decoder, usr_std, wd_std, ctx_std, scale=1e-3):
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
     # Training:
