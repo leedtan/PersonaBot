@@ -311,7 +311,7 @@ parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=32)
 parser.add_argument('--decoder_size_sentence', type=int, default=32)
 parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=32
+parser.add_argument('--size_wd', type=int, default=32)
 parser.add_argument('--batchsize', type=int, default=64)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
