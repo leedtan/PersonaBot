@@ -387,7 +387,12 @@ dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.nu
 itr = args.loaditerations
 epoch = 0
 usr_std = wd_std = sent_std = ctx_std = 1e-7
-
+adv_emb_diffs = []
+adv_sent_diffs = []
+adv_ctx_diffs = []
+adv_emb_scales = []
+adv_sent_scales = []
+adv_ctx_scales = []
 if modelnameload:
     if len(modelnameload) > 0:
         user_emb = T.load('%s-user_emb-%07d' % (modelnameload, args.loaditerations))
@@ -421,10 +426,11 @@ while True:
         #batch, turns in a sample, embedding_dim
         usrs_b = user_emb(speaker_padded)
         if itr % 10 == 1 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 8)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
-               context,words_padded, decoder, usr_std, wd_std)
+               context,words_padded, decoder, usr_std, wd_std, scale=scale)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
@@ -433,19 +439,21 @@ while True:
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
         if itr % 10 == 4 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 8)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std)
+                    usr_std, wd_std, sent_std, scale=scale)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns)
         if itr % 10 == 7 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 8)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
-                      usr_std, wd_std, ctx_std)
+                      usr_std, wd_std, ctx_std, scale=scale)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
@@ -463,12 +471,18 @@ while True:
         print(loss)
         opt.step()
         if itr % 10 == 1 and args.adversarial_sample == 1:
+            adv_emb_diffs.append(loss_adv - loss)
+            adv_emb_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 4 and args.adversarial_sample == 1:
+            adv_sent_diffs.append(loss_adv - loss)
+            adv_sent_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 7 and args.adversarial_sample == 1:
+            adv_ctx_diffs.append(loss_adv - loss)
+            adv_ctx_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
         mask = mask_4d(wds_b.size(), turns , sentence_lengths_padded)
@@ -528,6 +542,15 @@ while True:
                     ),
                 itr
                 )
+            add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
+                            scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
+                            names=['embeddings', 'sentence', 'context'], itr = itr, log_dir = args.logdir, tag = 'scatterplot')
+            adv_emb_diffs = []
+            adv_sent_diffs = []
+            adv_ctx_diffs = []
+            adv_emb_scales = []
+            adv_sent_scales = []
+            adv_ctx_scales = []
         
         if itr % 1000 == 0:
             greedy_responses = decoder.greedyGenerate(ctx.view(-1, size_context)[:5,:],

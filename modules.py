@@ -5,8 +5,12 @@ import torch.nn.functional as F
 import torch.nn.init as INIT
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import os
-
+import tensorflow as TF
 import numpy as np
+import matplotlib.pyplot as PL
+from PIL import Image
+
+
 
 def cuda(obj):
     if os.getenv('USE_CUDA', None):
@@ -102,6 +106,7 @@ def dynamic_rnn(rnn, seq, length, initial_state):
         state = advanced_index(s, 1, length_inverse_idx)
 
     return out, state
+
 
 
 def check_grad(params):
@@ -231,6 +236,30 @@ class HierarchicalLogSoftmax(NN.Module):
             word_prob = word_prob.gather(1, internal_target_word_in_cls.unsqueeze(1))
 
             return word_prob
+
+
+def add_scatterplot(writer, losses, scales, names, itr, log_dir, tag = 'scatterplot'):
+    png_file = '%s/temp.png' % log_dir
+    for loss_list, scale_list, name in zip(losses, scales, names):
+        PL.scatter(scales, losses, label = name)
+    PL.legend()
+    PL.savefig(png_file)
+    PL.close()
+    with open(png_file, 'rb') as f:
+        imgbuf = f.read()
+    img = Image.open(png_file)
+    summary = TF.Summary.Image(
+            height=img.height,
+            width=img.width,
+            colorspace=3,
+            encoded_image_string=imgbuf
+            )
+    summary = TF.Summary.Value(tag='%s' % (tag), image=summary)
+    writer.add_summary(TF.Summary(value=[summary]), itr)
+
+
+
+
 
 
 def init_glove(word_emb, vcb, ivcb, dataroot):
