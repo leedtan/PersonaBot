@@ -9,6 +9,8 @@ import tensorflow as TF
 import numpy as np
 import matplotlib.pyplot as PL
 from PIL import Image
+import matplotlib
+matplotlib.rcParams.update({'font.size': 11})
 
 
 
@@ -240,6 +242,7 @@ class HierarchicalLogSoftmax(NN.Module):
 
 def add_scatterplot(writer, losses, scales, names, itr, log_dir, tag = 'scatterplot'):
     png_file = '%s/temp.png' % log_dir
+    PL.figure(figsize=(4,4))
     for loss_list, scale_list, name in zip(losses, scales, names):
         PL.scatter(scale_list, loss_list, label = name, alpha=.5)
     PL.xlabel('scales')
