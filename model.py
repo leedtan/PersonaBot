@@ -471,7 +471,6 @@ while True:
         grad_norm = clip_grad(params, args.gradclip)
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
-        print(loss)
         opt.step()
         if itr % 10 == 1 and args.adversarial_sample == 1:
             adv_emb_diffs.append(loss_adv - loss)
@@ -566,7 +565,8 @@ while True:
             T.save(enc, '%s-enc-%07d' % (modelnamesave, itr))
             T.save(context, '%s-context-%07d' % (modelnamesave, itr))
             T.save(decoder, '%s-decoder-%07d' % (modelnamesave, itr))
-        print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
+        if itr % 10 == 0:
+            print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
 
     
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
