@@ -250,7 +250,10 @@ def add_scatterplot(writer, losses, scales, names, itr, log_dir, tag = 'scatterp
     PL.ylabel('adv loss change')
     PL.legend()
     PL.tight_layout()
-    PL.axis('tight')
+    axes = PL.gca()
+    y = np.array(losses)
+    rnge = y.max() - y.min()
+    axes.set_ylim([y.min() - rnge/100,y.max() + rnge/100])
     PL.savefig(png_file)
     PL.close()
     with open(png_file, 'rb') as f:
