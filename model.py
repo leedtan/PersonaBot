@@ -369,16 +369,16 @@ parser.add_argument('--decoder_size_sentence', type=int, default=32)
 parser.add_argument('--decoder_beam_size', type=int, default=16)
 parser.add_argument('--decoder_max_generated', type=int, default=18)
 parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=32)
-parser.add_argument('--batchsize', type=int, default=32)
+parser.add_argument('--size_wd', type=int, default=50)
+parser.add_argument('--batchsize', type=int, default=16)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=100)
-parser.add_argument('--max_turns_allowed', type=int, default=6)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=64)
+parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 args = parser.parse_args()
@@ -447,7 +447,12 @@ dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.nu
 itr = args.loaditerations
 epoch = 0
 usr_std = wd_std = sent_std = ctx_std = 1e-7
-
+adv_emb_diffs = []
+adv_sent_diffs = []
+adv_ctx_diffs = []
+adv_emb_scales = []
+adv_sent_scales = []
+adv_ctx_scales = []
 if modelnameload:
     if len(modelnameload) > 0:
         user_emb = T.load('%s-user_emb-%07d' % (modelnameload, args.loaditerations))
@@ -455,10 +460,13 @@ if modelnameload:
         enc = T.load('%s-enc-%07d' % (modelnameload, args.loaditerations))
         context = T.load('%s-context-%07d' % (modelnameload, args.loaditerations))
         decoder = T.load('%s-decoder-%07d' % (modelnameload, args.loaditerations))
-
+adv_style = 0
+scatter_entropy_freq = 200
 while True:
     epoch += 1
     for item in dataloader:
+        if itr % scatter_entropy_freq == 0:
+            adv_style = 1 - adv_style
         itr += 1
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
@@ -482,10 +490,11 @@ while True:
         usrs_b = user_emb(speaker_padded)
 
         if itr % 10 == 1 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
-               context,words_padded, decoder, usr_std, wd_std)
+               context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
@@ -494,19 +503,21 @@ while True:
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
         if itr % 10 == 4 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std)
+                    usr_std, wd_std, sent_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns)
         if itr % 10 == 7 and args.adversarial_sample == 1:
+            scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
-                      usr_std, wd_std, ctx_std)
+                      usr_std, wd_std, ctx_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
@@ -521,15 +532,20 @@ while True:
         grad_norm = clip_grad(params, args.gradclip)
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
-        print(loss)
         opt.step()
         if itr % 10 == 1 and args.adversarial_sample == 1:
+            adv_emb_diffs.append(loss_adv - loss)
+            adv_emb_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 4 and args.adversarial_sample == 1:
+            adv_sent_diffs.append(loss_adv - loss)
+            adv_sent_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 7 and args.adversarial_sample == 1:
+            adv_ctx_diffs.append(loss_adv - loss)
+            adv_ctx_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
         mask = mask_4d(wds_b.size(), turns , sentence_lengths_padded)
@@ -560,11 +576,11 @@ while True:
                     itr
                     )
 
-        if itr % 100 == 0:
-            prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
-                                 usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
+        if itr % scatter_entropy_freq == 0:
+            prob, _ = decoder(ctx[:3,:-1], wds_b[:3,1:,:max_output_words],
+                                 usrs_b[:3,1:], sentence_lengths_padded[:3,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-            mask = mask_4d(prob.size(), turns[:4] -1 , sentence_lengths_padded[:4,1:])
+            mask = mask_4d(prob.size(), turns[:3] -1 , sentence_lengths_padded[:3,1:])
             Entropy = (prob.exp() * prob * -1) * mask
             Entropy_per_word = Entropy.sum(-1)
             Entropy_per_word = tonumpy(Entropy_per_word)[0]
@@ -589,18 +605,32 @@ while True:
                     ),
                 itr
                 )
+            if args.adversarial_sample == 1:
+                add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
+                                scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
+                                names=['embeddings', 'sentence', 'context'], itr = itr, 
+                                log_dir = args.logdir, tag = 'scatterplot', style=adv_style)
+                adv_emb_diffs = []
+                adv_sent_diffs = []
+                adv_ctx_diffs = []
+                adv_emb_scales = []
+                adv_sent_scales = []
+                adv_ctx_scales = []
         
-        if itr % 1000 == 0:
+        if itr % 1000 == 5:
             greedy_responses = decoder.viterbiGenerate(ctx.view(-1, size_context)[:5,:],
                                                       usrs_b.view(-1, size_usr)[:5,:], 
                                                       word_emb, dataset)
-            print(dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            print('GENERATED:',dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:5,0,:])))
+        if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%07d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%07d' % (modelnamesave, itr))
             T.save(enc, '%s-enc-%07d' % (modelnamesave, itr))
             T.save(context, '%s-context-%07d' % (modelnamesave, itr))
             T.save(decoder, '%s-decoder-%07d' % (modelnamesave, itr))
-        print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
+        if itr % 10 == 0:
+            print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
 
     
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
