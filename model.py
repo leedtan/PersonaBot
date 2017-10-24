@@ -32,7 +32,6 @@ from data_loader_stage1 import *
 from adv import *
 #from test import test
 
-
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
         NN.Module.__init__(self)
@@ -387,6 +386,7 @@ dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.nu
 
 itr = args.loaditerations
 epoch = 0
+usr_std = wd_std = sent_std = ctx_std = 1e-7
 
 if modelnameload:
     if len(modelnameload) > 0:
@@ -424,7 +424,7 @@ while True:
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
-               context,words_padded, decoder)
+               context,words_padded, decoder, usr_std, wd_std)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
@@ -435,7 +435,8 @@ while True:
         if itr % 10 == 4 and args.adversarial_sample == 1:
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
-                    sentence_lengths_padded, words_padded, decoder)
+                    sentence_lengths_padded, words_padded, decoder,
+                    usr_std, wd_std, sent_std)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
@@ -443,7 +444,8 @@ while True:
         ctx, _ = context(encodings, turns)
         if itr % 10 == 7 and args.adversarial_sample == 1:
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
-                      wds_b,usrs_b,words_padded, decoder)
+                      wds_b,usrs_b,words_padded, decoder,
+                      usr_std, wd_std, ctx_std)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
@@ -479,15 +481,19 @@ while True:
         ctx_dist = ctx * mask
         wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
         if itr % 10 == 9:
+            wd_std = np.nanstd(wds_dist)
+            usr_std = np.nanstd(usrs_dist)
+            sent_std = np.nanstd(sent_dist)
+            ctx_std = np.nanstd(ctx_dist)
             train_writer.add_summary(
                     TF.Summary(
                         value=[
                             TF.Summary.Value(tag='loss', simple_value=loss),
                             TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                            TF.Summary.Value(tag='wd_std', simple_value=np.nanstd(wds_dist)),
-                            TF.Summary.Value(tag='usr_std', simple_value=np.nanstd(usrs_dist)),
-                            TF.Summary.Value(tag='sent_std', simple_value=np.nanstd(sent_dist)),
-                            TF.Summary.Value(tag='ctx_std', simple_value=np.nanstd(ctx_dist)),
+                            TF.Summary.Value(tag='wd_std', simple_value=wd_std),
+                            TF.Summary.Value(tag='usr_std', simple_value=usr_std),
+                            TF.Summary.Value(tag='sent_std', simple_value=sent_std),
+                            TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
                             ]
                         ),
                     itr
