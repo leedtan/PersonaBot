@@ -400,10 +400,13 @@ if modelnameload:
         enc = T.load('%s-enc-%07d' % (modelnameload, args.loaditerations))
         context = T.load('%s-context-%07d' % (modelnameload, args.loaditerations))
         decoder = T.load('%s-decoder-%07d' % (modelnameload, args.loaditerations))
-
+adv_style = 0
+scatter_entropy_freq = 200
 while True:
     epoch += 1
     for item in dataloader:
+        if itr % scatter_entropy_freq == 0:
+            adv_style = 1 - adv_style
         itr += 1
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
@@ -430,7 +433,7 @@ while True:
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
-               context,words_padded, decoder, usr_std, wd_std, scale=scale)
+               context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
         max_turns = turns.max()
@@ -443,7 +446,7 @@ while True:
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std, scale=scale)
+                    usr_std, wd_std, sent_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
@@ -453,7 +456,7 @@ while True:
             scale = float(np.exp(-np.random.uniform(4, 8)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
-                      usr_std, wd_std, ctx_std, scale=scale)
+                      usr_std, wd_std, ctx_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
@@ -513,7 +516,7 @@ while True:
                     itr
                     )
 
-        if itr % 100 == 0:
+        if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],
                                  usrs_b[:4,1:], sentence_lengths_padded[:4,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
@@ -544,7 +547,8 @@ while True:
                 )
             add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
                             scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
-                            names=['embeddings', 'sentence', 'context'], itr = itr, log_dir = args.logdir, tag = 'scatterplot')
+                            names=['embeddings', 'sentence', 'context'], itr = itr, 
+                            log_dir = args.logdir, tag = 'scatterplot', style=adv_style)
             adv_emb_diffs = []
             adv_sent_diffs = []
             adv_ctx_diffs = []

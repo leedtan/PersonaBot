@@ -239,8 +239,9 @@ class HierarchicalLogSoftmax(NN.Module):
 
             return word_prob
 
-
-def add_scatterplot(writer, losses, scales, names, itr, log_dir, tag = 'scatterplot'):
+style_map = {0: 'constant', 1: 'gradient'}
+def add_scatterplot(writer, losses, scales, names, itr, log_dir, 
+                    tag = 'scatterplot', style = 0):
     png_file = '%s/temp.png' % log_dir
     PL.figure(figsize=(6,6))
     for loss_list, scale_list, name in zip(losses, scales, names):
@@ -248,6 +249,7 @@ def add_scatterplot(writer, losses, scales, names, itr, log_dir, tag = 'scatterp
     PL.xlabel('scales')
     PL.xscale('log')
     PL.ylabel('adv loss change')
+    PL.title(style_map[style])
     PL.legend()
     PL.tight_layout()
     axes = PL.gca()
