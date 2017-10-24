@@ -595,7 +595,7 @@ while True:
                         ]
                     ),
                 itr
-            
+            )
             '''
             E_mean, E_std, E_max, E_min = \
                     np.nanmean(Entropy_per_word), np.nanstd(Entropy_per_word), \
