@@ -307,12 +307,12 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=2)
 parser.add_argument('--context_layers', type=int, default=2)
-parser.add_argument('--size_context', type=int, default=256)
-parser.add_argument('--size_sentence', type=int, default=64)
-parser.add_argument('--decoder_size_sentence', type=int, default=64)
-parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=64)
+parser.add_argument('--size_context', type=int, default=2)
+parser.add_argument('--size_sentence', type=int, default=2)
+parser.add_argument('--decoder_size_sentence', type=int, default=2)
+parser.add_argument('--size_usr', type=int, default=2)
+parser.add_argument('--size_wd', type=int, default=2)
+parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
@@ -481,10 +481,10 @@ while True:
         ctx_dist = ctx * mask
         wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
         if itr % 10 == 9:
-            wd_std = np.nanstd(wds_dist)
-            usr_std = np.nanstd(usrs_dist)
-            sent_std = np.nanstd(sent_dist)
-            ctx_std = np.nanstd(ctx_dist)
+            wd_std = float(np.nanstd(wds_dist))
+            usr_std = float(np.nanstd(usrs_dist))
+            sent_std = float(np.nanstd(sent_dist))
+            ctx_std = float(np.nanstd(ctx_dist))
             train_writer.add_summary(
                     TF.Summary(
                         value=[
