@@ -37,6 +37,7 @@ class UbuntuDialogDataset(Dataset):
         None of the users has the form of '<xxx>', so the same applies for users
         as well.
         '''
+        self.max_sentence_length_allowed = max_sentence_length_allowed
         self._pkls = []
         self._max_turns_allowed = max_turns_allowed
         with open(turncount_pkl, 'rb') as f:
@@ -51,8 +52,7 @@ class UbuntuDialogDataset(Dataset):
             files = os.listdir(os.path.join(root, curdir))
             pkls = [os.path.join(root, curdir, f)
                     for f in files
-                    if f.endswith('.pkl') and
-                    self._max_sentence_lengths[os.path.join(curdir, f)] <= max_sentence_length_allowed]
+                    if f.endswith('.pkl')]
             self._pkls.extend(pkls)
 
         if coalesce_types is not None:
@@ -98,6 +98,7 @@ class UbuntuDialogDataset(Dataset):
         with open(self._pkls[i], 'rb') as f:
             item = pickle.load(f)
             for sentence in item['words']:
+                sentence = sentence[:self.max_sentence_length_allowed]
                 sentence.insert(0, START)
                 sentence.append(EOS)
             return item
