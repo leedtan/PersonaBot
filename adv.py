@@ -28,8 +28,8 @@ def adversarial_word_users(wds_b, usrs_b, turns,
         usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale * usr_std- \
             (usrs_adv < 0).type(T.FloatTensor) * scale * usr_std
     else:
-        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 1000
-        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 1000
+        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 10
+        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 10
     wds_adv, usrs_adv = wds_adv.data, usrs_adv.data
     return wds_adv, usrs_adv, tonumpy(loss)[0]
     
@@ -55,9 +55,9 @@ def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
         usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale * usr_std - \
             (usrs_adv < 0).type(T.FloatTensor) * scale * usr_std
     else:
-        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 1000
-        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 1000
-        enc_adv = enc_adv * scale * sent_std / T.norm(enc_adv) * 1000
+        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 10
+        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 10
+        enc_adv = enc_adv * scale * sent_std / T.norm(enc_adv) * 10
     wds_adv, usrs_adv, enc_adv = wds_adv.data, usrs_adv.data, enc_adv.data
     return wds_adv, usrs_adv, enc_adv, tonumpy(loss)[0]
     
@@ -79,9 +79,9 @@ def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
         usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale*usr_std - \
             (usrs_adv < 0).type(T.FloatTensor) * scale*usr_std
     else:
-        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 1000
-        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 1000
-        ctx_adv = ctx_adv * scale * ctx_std / T.norm(ctx_adv) * 1000
+        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 10
+        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 10
+        ctx_adv = ctx_adv * scale * ctx_std / T.norm(ctx_adv) * 10
     wds_adv, usrs_adv, ctx_adv = wds_adv.data, usrs_adv.data, ctx_adv.data
     return wds_adv, usrs_adv, ctx_adv, tonumpy(loss)[0]
     '''
