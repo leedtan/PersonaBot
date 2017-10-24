@@ -241,7 +241,9 @@ class HierarchicalLogSoftmax(NN.Module):
 def add_scatterplot(writer, losses, scales, names, itr, log_dir, tag = 'scatterplot'):
     png_file = '%s/temp.png' % log_dir
     for loss_list, scale_list, name in zip(losses, scales, names):
-        PL.scatter(scales, losses, label = name)
+        PL.scatter(scale_list, loss_list, label = name, alpha=.5)
+    PL.xlabel('scales')
+    PL.ylabel('adv loss change')
     PL.legend()
     PL.savefig(png_file)
     PL.close()
