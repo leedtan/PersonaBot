@@ -30,7 +30,7 @@ from collections import Counter
 from data_loader_stage1 import *
 
 from adv import *
-#from test import test
+from test import test
 
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
@@ -498,6 +498,17 @@ while True:
                         ),
                     itr
                     )
+        # Beam search test
+        words = tonumpy(words_padded.data[0, ::2])
+        sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
+        initiator = speaker_padded.data[0, 0]
+        respondent = speaker_padded.data[0, 1]
+        words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(turns[0] // 2)]
+        dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
+                                initiator, respondent, args.max_sentence_length_allowed)
+        _, _, dialogue_strings = dataset.translate_item(None, None, dialogue)
+        for d, ds, s in zip(dialogue, dialogue_strings, scores):
+            print(ds, d, s)
 
         if itr % 100 == 0:
             prob, _ = decoder(ctx[:4,:-1], wds_b[:4,1:,:max_output_words],

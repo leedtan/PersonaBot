@@ -6,7 +6,19 @@ from numbers import Integral
 import numpy as np
 
 BeamItem = namedtuple('BeamItem', ['parent', 'token', 'score', 'state', 'complete'])
-one = tovar(T.LongTensor([1]))
+one = cuda(T.LongTensor([1]))
+
+def concat_states(states):
+    if isinstance(states[0], tuple):
+        return tuple(T.cat(s, 1) for s in zip(*states))
+    else:
+        return T.cat(states, 1)
+
+def index_states(states, i):
+    if isinstance(states, tuple):
+        return tuple(s[:, i:i+1] for s in states)
+    else:
+        return states[:, i:i+1]
 
 def beam_search(dataset,
                 decoder,
@@ -30,7 +42,7 @@ def beam_search(dataset,
     beam_list = [beam]
 
     context_encodings = context_encoding.expand(beam_width, 1, context_encoding.size()[2])
-    user_embs = user_emb.expand(beam_width, 1, user_emb.size()[2])
+    user_embs = user_emb.unsqueeze(1).expand(beam_width, 1, user_emb.size()[1])
     ones = one.unsqueeze(0).expand(beam_width, 1)
 
     early_stop = False
@@ -47,7 +59,7 @@ def beam_search(dataset,
 
         # Get the decoder inputs from last beam and concatenate them into a batch
         current_word_indices = tovar(T.LongTensor([[b.token] for b in last_beam]), volatile=True)
-        decoder_states = T.cat([b.state for b in last_beam], 1)
+        decoder_states = concat_states([b.state for b in last_beam])
         word_embs = word_embedder(current_word_indices).unsqueeze(1)
 
         # Unroll a step
@@ -72,13 +84,13 @@ def beam_search(dataset,
                     parent=last_beam[i],
                     token=token,
                     score=score,
-                    state=decoder_states[:, i],
+                    state=index_states(decoder_states, i),
                     complete=last_beam[i].complete or token == dataset.end_token_index
                     ))
 
         # Take top k candidates and form the next beam
         candidates_topk = sorted(candidates, key=lambda item: item.score, reverse=True)
-        beam_list.append(list(candidates_topk))
+        beam_list.append(list(candidates_topk)[:beam_width])
 
     last_beam = beam_list[-1]
     if early_stop:
@@ -205,9 +217,5 @@ def test(dataset,
             # Proceed to the next initiator's utterance
             _sentence = sentences[i + 1]
             score = 0
-
-    # Add the last sentence and score
-    dialogue.append(_sentence)
-    scores.append(score)
 
     return dialogue, scores
