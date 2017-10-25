@@ -17,6 +17,7 @@ from numpy import rate
 import argparse, sys, datetime, pickle, os
 
 import matplotlib
+matplotlib.use('Agg')
 from mailbox import _create_carefully
 import matplotlib.pyplot as PL
 
@@ -626,16 +627,17 @@ while True:
                     itr
                     )
         # Beam search test
-        words = tonumpy(words_padded.data[0, ::2])
-        sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
-        initiator = speaker_padded.data[0, 0]
-        respondent = speaker_padded.data[0, 1]
-        words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(turns[0] // 2)]
-        dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
-                                initiator, respondent, args.max_sentence_length_allowed)
-        _, _, dialogue_strings = dataset.translate_item(None, None, dialogue)
-        for d, ds, s in zip(dialogue, dialogue_strings, scores):
-            print(ds, d, s)
+        if itr % 100 == 0:
+            words = tonumpy(words_padded.data[0, ::2])
+            sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
+            initiator = speaker_padded.data[0, 0]
+            respondent = speaker_padded.data[0, 1]
+            words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(turns[0] // 2)]
+            dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
+                                    initiator, respondent, args.max_sentence_length_allowed)
+            _, _, dialogue_strings = dataset.translate_item(None, None, dialogue)
+            for d, ds, s in zip(dialogue, dialogue_strings, scores):
+                print(ds, d, s)
 
         if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:1,:-1], wds_b[:1,1:,:max_output_words],

@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as PL
 from PIL import Image
 import matplotlib
+matplotlib.use('Agg')
 matplotlib.rcParams.update({'font.size': 11})
 
 
