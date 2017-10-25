@@ -686,6 +686,7 @@ while True:
                 adv_emb_scales = []
                 adv_sent_scales = []
                 adv_ctx_scales = []
+        # FIXME: the following breaks
         '''
         if itr % 1000 == 5:
             greedy_responses = decoder.viterbiGenerate(ctx.view(-1, size_context)[:5,:],
