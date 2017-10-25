@@ -16,9 +16,11 @@ matplotlib.rcParams.update({'font.size': 11})
 
 def cuda(obj):
     if os.getenv('USE_CUDA', None):
-        return obj.cuda()
-    else:
-        return obj
+        if isinstance(obj, tuple):
+            return tuple(cuda(o) for o in obj)
+        elif hasattr(obj, 'cuda'):
+            return obj.cuda()
+    return obj
 
 def tovar(*arrs, **kwargs):
     tensors = [(T.from_numpy(a) if isinstance(a, np.ndarray) else a) for a in arrs]

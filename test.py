@@ -152,7 +152,7 @@ def test(dataset,
     '''
     def sentence_to_vars(_sentence):
         sentence = tovar(np.array([_sentence]), volatile=True)
-        sentence_length = tovar(T.LongTensor([len(_sentence)]), volatile=True)
+        sentence_length = T.LongTensor([len(_sentence)])
         return sentence, sentence_length
 
     assert isinstance(sentences, Iterable)
