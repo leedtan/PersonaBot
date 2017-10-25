@@ -417,7 +417,7 @@ parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=16)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -504,11 +504,11 @@ adv_sent_scales = []
 adv_ctx_scales = []
 if modelnameload:
     if len(modelnameload) > 0:
-        user_emb = T.load('%s-user_emb-%07d' % (modelnameload, args.loaditerations))
-        word_emb = T.load('%s-word_emb-%07d' % (modelnameload, args.loaditerations))
-        enc = T.load('%s-enc-%07d' % (modelnameload, args.loaditerations))
-        context = T.load('%s-context-%07d' % (modelnameload, args.loaditerations))
-        decoder = T.load('%s-decoder-%07d' % (modelnameload, args.loaditerations))
+        user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations))
+        word_emb = T.load('%s-word_emb-%08d' % (modelnameload, args.loaditerations))
+        enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations))
+        context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations))
+        decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
 adv_style = 0
 scatter_entropy_freq = 200
 while True:
@@ -516,6 +516,7 @@ while True:
     for item in dataloader:
         if itr % scatter_entropy_freq == 0:
             adv_style = 1 - adv_style
+            adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
         itr += 1
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
@@ -695,11 +696,11 @@ while True:
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:5,0,:])))
         '''
         if itr % 10000 == 0:
-            T.save(user_emb, '%s-user_emb-%07d' % (modelnamesave, itr))
-            T.save(word_emb, '%s-word_emb-%07d' % (modelnamesave, itr))
-            T.save(enc, '%s-enc-%07d' % (modelnamesave, itr))
-            T.save(context, '%s-context-%07d' % (modelnamesave, itr))
-            T.save(decoder, '%s-decoder-%07d' % (modelnamesave, itr))
+            T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
+            T.save(word_emb, '%s-word_emb-%08d' % (modelnamesave, itr))
+            T.save(enc, '%s-enc-%08d' % (modelnamesave, itr))
+            T.save(context, '%s-context-%08d' % (modelnamesave, itr))
+            T.save(decoder, '%s-decoder-%08d' % (modelnamesave, itr))
         if itr % 10 == 0:
             print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', 2 ** tonumpy(loss))
 

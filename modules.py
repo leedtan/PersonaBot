@@ -124,6 +124,10 @@ def check_grad(params):
             return False
     return True
 
+def adjust_learning_rate(optimizer, lr):
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+        
 def clip_grad(params, clip_norm):
     norm = np.sqrt(
             sum(p.grad.data.norm() ** 2
