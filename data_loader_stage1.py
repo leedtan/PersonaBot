@@ -97,10 +97,10 @@ class UbuntuDialogDataset(Dataset):
         '''
         with open(self._pkls[i], 'rb') as f:
             item = pickle.load(f)
-            for sentence in item['words']:
-                sentence = sentence[:self.max_sentence_length_allowed]
-                sentence.insert(0, START)
-                sentence.append(EOS)
+            for i in range(len(item['words'])):
+                item['words'][i] = item['words'][i][:self.max_sentence_length_allowed - 2]  # START and EOS
+                item['words'][i].insert(0, START)
+                item['words'][i].append(EOS)
             return item
 
     def get_indexed_item(self, i):

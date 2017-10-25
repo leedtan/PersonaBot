@@ -636,8 +636,8 @@ while True:
             dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
                                     initiator, respondent, args.max_sentence_length_allowed)
             _, _, dialogue_strings = dataset.translate_item(None, None, dialogue)
-            for d, ds, s in zip(dialogue, dialogue_strings, scores):
-                print(ds, d, s)
+            for i, (d, ds, s in enumerate(zip(dialogue, dialogue_strings, scores)):
+                print('REAL' if i % 2 == 0 else 'FAKE', ds, d, s)
 
         if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:1,:-1], wds_b[:1,1:,:max_output_words],
