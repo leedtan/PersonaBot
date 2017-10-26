@@ -36,122 +36,140 @@ from test import test
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
         NN.Module.__init__(self)
-        with T.cuda.device(args.enc_gpu_id):
-            self._output_size = output_size
-            self._size_wd = size_wd
-            self._size_usr = size_usr
-            self._num_layers = num_layers
+        self._output_size = output_size
+        self._size_wd = size_wd
+        self._size_usr = size_usr
+        self._num_layers = num_layers
 
-            self.rnn = NN.LSTM(
-                    size_usr + size_wd,
-                    output_size // 2,
-                    num_layers,
-                    bidirectional=True,
-                    )
-            init_lstm(self.rnn)
+        self.rnn = NN.LSTM(
+                size_usr + size_wd,
+                output_size // 2,
+                num_layers,
+                bidirectional=True,
+                )
+        init_lstm(self.rnn)
 
     def forward(self, wd_emb, usr_emb, length):
-        with T.cuda.device(args.enc_gpu_id):
-            wd_emb = cuda(wd_emb)
-            usr_emb = cuda(usr_emb)
-            length = cuda(length)
+        wd_emb = cuda(wd_emb)
+        usr_emb = cuda(usr_emb)
+        length = cuda(length)
 
-            num_layers = self._num_layers
-            batch_size = wd_emb.size()[0]
-            output_size = self._output_size
-            maxlenbatch = wd_emb.size()[1]
-            #DBG HERE
-            usr_emb = usr_emb.unsqueeze(1)
-            usr_emb = usr_emb.expand(batch_size,maxlenbatch,usr_emb.size()[-1])
-            #wd_emb = wd_emb.permute(1, 0, 2)
-            #Concatenate these
-            embed_seq =  T.cat((usr_emb, wd_emb),2)
-            initial_state = (
-                    tovar(T.zeros(num_layers * 2, batch_size, output_size // 2)),
-                    tovar(T.zeros(num_layers * 2, batch_size, output_size // 2)),
-                    )
-            #embed_seq: 93,160,26 length: 160,output_size: 18, init[0]: 2,160,9
-            embed_seq = embed_seq.permute(1,0,2)
-            embed, (h, c) = dynamic_rnn(self.rnn, embed_seq, length, initial_state)
-            h = h.permute(1, 0, 2)
+        num_layers = self._num_layers
+        batch_size = wd_emb.size()[0]
+        output_size = self._output_size
+        maxlenbatch = wd_emb.size()[1]
+        #DBG HERE
+        usr_emb = usr_emb.unsqueeze(1)
+        usr_emb = usr_emb.expand(batch_size,maxlenbatch,usr_emb.size()[-1])
+        #wd_emb = wd_emb.permute(1, 0, 2)
+        #Concatenate these
+        embed_seq =  T.cat((usr_emb, wd_emb),2)
+        initial_state = (
+                tovar(T.zeros(num_layers * 2, batch_size, output_size // 2)),
+                tovar(T.zeros(num_layers * 2, batch_size, output_size // 2)),
+                )
+        #embed_seq: 93,160,26 length: 160,output_size: 18, init[0]: 2,160,9
+        embed_seq = embed_seq.permute(1,0,2)
+        embed, (h, c) = dynamic_rnn(self.rnn, embed_seq, length, initial_state)
+        h = h.permute(1, 0, 2)
 
-            return h[:, -2:].contiguous().view(batch_size, output_size)
+        return h[:, -2:].contiguous().view(batch_size, output_size)
 
 class Context(NN.Module):
     def __init__(self,in_size, context_size, num_layers=1):
         NN.Module.__init__(self)
-        with T.cuda.device(args.ctx_gpu_id):
-            self._context_size = context_size
-            self._in_size = in_size
-            self._num_layers = num_layers
+        self._context_size = context_size
+        self._in_size = in_size
+        self._num_layers = num_layers
 
-            self.rnn = NN.LSTM(
-                    in_size,
-                    context_size,
-                    num_layers,
-                    bidirectional=False,
-                    )
-            init_lstm(self.rnn)
+        self.rnn = NN.LSTM(
+                in_size,
+                context_size,
+                num_layers,
+                bidirectional=False,
+                )
+        init_lstm(self.rnn)
 
     def zero_state(self, batch_size):
-        with T.cuda.device(args.ctx_gpu_id):
-            lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
-            lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
-            initial_state = (lstm_h, lstm_c)
-            return initial_state
+        lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        initial_state = (lstm_h, lstm_c)
+        return initial_state
 
     def forward(self, sent_encodings, length, initial_state=None):
-        with T.cuda.device(args.ctx_gpu_id):
-            sent_encodings = cuda(sent_encodings)
-            length = cuda(length)
-            initial_state = cuda(initial_state)
+        sent_encodings = cuda(sent_encodings)
+        length = cuda(length)
+        initial_state = cuda(initial_state)
 
-            num_layers = self._num_layers
-            batch_size = sent_encodings.size()[0]
-            context_size = self._context_size
-            
-            if initial_state is None:
-                initial_state = self.zero_state(batch_size)
-            sent_encodings = sent_encodings.permute(1,0,2)
-            embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
-            embed = embed.contiguous().view(-1, context_size)
-            #h = h.permute(1, 0, 2)
+        num_layers = self._num_layers
+        batch_size = sent_encodings.size()[0]
+        context_size = self._context_size
+        
+        if initial_state is None:
+            initial_state = self.zero_state(batch_size)
+        sent_encodings = sent_encodings.permute(1,0,2)
+        embed, (h, c) = dynamic_rnn(self.rnn, sent_encodings, length, initial_state)
+        embed = embed.contiguous().view(-1, context_size)
+        #h = h.permute(1, 0, 2)
 
         embed = cuda(embed)
         h, c = cuda((h, c))
         return embed.view(batch_size, -1, context_size), (h, c)
 
+class Attention(NN.Module):
+    def __init__(self, size_sentence, max_turns_allowed, num_layers = 1):
+        NN.Module.__init__(self)
+        self._size_sentence = size_sentence
+        self._max_turns_allowed = max_turns_allowed
+        self._num_layers = num_layers
+
+        self.F = NN.Sequential(
+            NN.Linear(size_sentence, size_sentence),
+            NN.LeakyReLU(),
+            NN.Linear(size_sentence, max_turns_allowed))
+        init_weights(self.F)
+
+    def forward(self, sent_encodings):
+        batch_size, num_turns, size_sentence = sent_encodings.size()
+        sent_encodings = cuda(sent_encodings)
+        max_turns_allowed = self._max_turns_allowed
+        num_layers = self._num_layers
+        attention_heads = self.F(sent_encodings.view(
+                batch_size * num_turns, size_sentence))
+        attention_heads = attention_heads.view(
+                batch_size, num_turns, max_turns_allowed)
+        
+        return sent_encodings
+
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, num_words, max_len_generated ,beam_size,
                  state_size = None, num_layers=1):
         NN.Module.__init__(self)
-        with T.cuda.device(args.dec_gpu_id):
-            self._num_words = num_words
-            self._beam_size = beam_size
-            self._max_len_generated = max_len_generated
-            self._context_size = context_size
-            self._size_wd = size_wd
-            self._size_usr = size_usr
-            self._num_layers = num_layers
-            if state_size == None:
-                state_size = size_usr + size_wd + context_size
-            self._state_size = state_size
+        self._num_words = num_words
+        self._beam_size = beam_size
+        self._max_len_generated = max_len_generated
+        self._context_size = context_size
+        self._size_wd = size_wd
+        self._size_usr = size_usr
+        self._num_layers = num_layers
+        if state_size == None:
+            state_size = size_usr + size_wd + context_size
+        self._state_size = state_size
 
-            self.rnn = NN.LSTM(
-                    size_wd + size_usr + context_size,
-                    state_size,
-                    num_layers,
-                    bidirectional=False,
-                    )
-            self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
-            init_lstm(self.rnn)
+        self.rnn = NN.LSTM(
+                size_wd + size_usr + context_size,
+                state_size,
+                num_layers,
+                bidirectional=False,
+                )
+        self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
+        init_lstm(self.rnn)
 
     def zero_state(self, batch_size):
-        with T.cuda.device(args.dec_gpu_id):
-            lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
-            lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
-            initial_state = (lstm_h, lstm_c)
-            return initial_state
+        lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        initial_state = (lstm_h, lstm_c)
+        return initial_state
 
     def forward(self, context_encodings, wd_emb, usr_emb, length, wd_target=None, initial_state=None):
         '''
@@ -164,62 +182,61 @@ class Decoder(NN.Module):
                 where the tensor contains the probability of ground truth (wd_target) and the float
                 scalar is the log-likelihood.
         '''
-        with T.cuda.device(args.dec_gpu_id):
-            context_encodings = cuda(context_encodings)
-            wd_emb = cuda(wd_emb)
-            usr_emb = cuda(usr_emb)
-            length = cuda(length)
-            wd_target = cuda(wd_target)
-            initial_state = cuda(initial_state)
+        context_encodings = cuda(context_encodings)
+        wd_emb = cuda(wd_emb)
+        usr_emb = cuda(usr_emb)
+        length = cuda(length)
+        wd_target = cuda(wd_target)
+        initial_state = cuda(initial_state)
 
-            num_layers = self._num_layers
-            batch_size = wd_emb.size()[0]
-            maxlenbatch = wd_emb.size()[1]
-            maxwordsmessage = wd_emb.size()[2]
-            context_size = self._context_size
-            size_wd = self._size_wd
-            size_usr = self._size_usr
-            state_size = self._state_size
-            if initial_state is None:
-                initial_state = self.zero_state(batch_size * maxlenbatch)
-            #batch, turns in a sample, words in a message, embedding_dim
+        num_layers = self._num_layers
+        batch_size = wd_emb.size()[0]
+        maxlenbatch = wd_emb.size()[1]
+        maxwordsmessage = wd_emb.size()[2]
+        context_size = self._context_size
+        size_wd = self._size_wd
+        size_usr = self._size_usr
+        state_size = self._state_size
+        if initial_state is None:
+            initial_state = self.zero_state(batch_size * maxlenbatch)
+        #batch, turns in a sample, words in a message, embedding_dim
 
-            usr_emb = usr_emb.unsqueeze(2)
-            usr_emb = usr_emb.expand(batch_size,maxlenbatch,maxwordsmessage,
-                                     usr_emb.size()[-1])
-            #length = length.unsqueeze(2)
-            #length = length.expand(batch_size,maxlenbatch,maxwordsmessage,
-            #                         length.size()[-1])
-            context_encodings = context_encodings.unsqueeze(2)
-            context_encodings = context_encodings.expand(
-                    batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
+        usr_emb = usr_emb.unsqueeze(2)
+        usr_emb = usr_emb.expand(batch_size,maxlenbatch,maxwordsmessage,
+                                 usr_emb.size()[-1])
+        #length = length.unsqueeze(2)
+        #length = length.expand(batch_size,maxlenbatch,maxwordsmessage,
+        #                         length.size()[-1])
+        context_encodings = context_encodings.unsqueeze(2)
+        context_encodings = context_encodings.expand(
+                batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
 
-            embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
+        embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
 
-            embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
-            embed_seq = embed_seq.permute(1,0,2).contiguous()
-            embed, (h, c) = dynamic_rnn(
-                    self.rnn, embed_seq, length.contiguous().view(-1),
-                    initial_state)
-            maxwordsmessage = embed.size()[0]
-            embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, state_size)
+        embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
+        embed_seq = embed_seq.permute(1,0,2).contiguous()
+        embed, (h, c) = dynamic_rnn(
+                self.rnn, embed_seq, length.contiguous().view(-1),
+                initial_state)
+        maxwordsmessage = embed.size()[0]
+        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, state_size)
 
-            if wd_target is None:
-                out = self.softmax(embed.view(-1, state_size))
-                out = out.view(batch_size, maxlenbatch, -1, self._num_words)
-                log_prob = None
-            else:
-                target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-                out = self.softmax(embed.view(-1, state_size), target.view(-1))
-                out = out.view(batch_size, maxlenbatch, maxwordsmessage)
-                mask = (target != 0).float()
-                out = out * mask
-                log_prob = out.sum() / mask.sum()
+        if wd_target is None:
+            out = self.softmax(embed.view(-1, state_size))
+            out = out.view(batch_size, maxlenbatch, -1, self._num_words)
+            log_prob = None
+        else:
+            target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
+            out = self.softmax(embed.view(-1, state_size), target.view(-1))
+            out = out.view(batch_size, maxlenbatch, maxwordsmessage)
+            mask = (target != 0).float()
+            out = out * mask
+            log_prob = out.sum() / mask.sum()
 
-            if log_prob is None:
-                return out, (h, c)#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
-            else:
-                return out, log_prob, (h, c)
+        if log_prob is None:
+            return out, (h, c)#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
+        else:
+            return out, log_prob, (h, c)
 
     def get_n_best_next_words(self, embed_seq, current_state, n=1):
         """
@@ -229,15 +246,14 @@ class Decoder(NN.Module):
         :param n: int, return top n words.
         :return: batch_size x n
         """
-        with T.cuda.device(args.dec_gpu_id):
-            embed_seq = cuda(embed_seq)
-            current_state = cuda(current_state)
+        embed_seq = cuda(embed_seq)
+        current_state = cuda(current_state)
 
-            batch_size = embed_seq.size(0)
-            embed, current_state = self.rnn(embed_seq.unsqueeze(0), current_state)
-            embed = embed.permute(1, 0, 2).contiguous().view(batch_size, self._state_size)
-            out = self.softmax(embed.squeeze())
-            val, indexes = out.topk(n, 1)
+        batch_size = embed_seq.size(0)
+        embed, current_state = self.rnn(embed_seq.unsqueeze(0), current_state)
+        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, self._state_size)
+        out = self.softmax(embed.squeeze())
+        val, indexes = out.topk(n, 1)
         return val, indexes, current_state
 
     def mat_idx_vector_to_vector(self, mat, vec):
@@ -247,10 +263,9 @@ class Decoder(NN.Module):
         :param vec: vector of size l
         :return: vector made of M[i, l[i]] i in [1,l]
         """
-        with T.cuda.device(args.dec_gpu_id):
-            out = T.LongTensor(mat.size(0))
-            for i in range(mat.size(0)):
-                out[i] = mat[i,vec[i]]
+        out = T.LongTensor(mat.size(0))
+        for i in range(mat.size(0)):
+            out[i] = mat[i,vec[i]]
 
         return out
 
@@ -262,33 +277,32 @@ class Decoder(NN.Module):
         :param usr_emb: (batch_size x usr_emb_size)
         :return: response : (batch_size x max_response_length)
         """
-        with T.cuda.device(args.dec_gpu_id):
-            context_encodings = cuda(context_encodings)
-            usr_emb = cuda(usr_emb)
-            word_emb = cuda(word_emb)
+        context_encodings = cuda(context_encodings)
+        usr_emb = cuda(usr_emb)
+        word_emb = cuda(word_emb)
 
-            num_layers = self._num_layers
-            state_size = self._state_size
-            max_len_generated = self._max_len_generated
+        num_layers = self._num_layers
+        state_size = self._state_size
+        max_len_generated = self._max_len_generated
 
-            batch_size = context_encodings.size(0)
-            lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
-            lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
-            current_state = (lstm_h, lstm_c)
+        batch_size = context_encodings.size(0)
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+        current_state = (lstm_h, lstm_c)
 
-            # Initial word of response : Start token
-            init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
-            # End of generated sentence : EOS token
-            stop_word = cuda(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
+        # Initial word of response : Start token
+        init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        # End of generated sentence : EOS token
+        stop_word = cuda(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
 
-            current_w = init_word
-            output = current_w.data.unsqueeze(1)
+        current_w = init_word
+        output = current_w.data.unsqueeze(1)
 
-            while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
-                current_w_emb = word_emb(current_w.squeeze())
-                embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
-                _, current_w, current_state= self.get_n_best_next_words(embed_seq, current_state)
-                output = T.cat((output, current_w.data), 1)
+        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
+            current_w_emb = word_emb(current_w.squeeze())
+            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
+            _, current_w, current_state= self.get_n_best_next_words(embed_seq, current_state)
+            output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
         return output
@@ -302,101 +316,100 @@ class Decoder(NN.Module):
         :param beam_size:  width of beam search.
         :return: response : (batch_size x max_response_length)
         """
-        with T.cuda.device(args.dec_gpu_id):
-            context_encodings = cuda(context_encodings)
-            usr_emb = cuda(usr_emb)
-            word_emb = cuda(word_emb)
+        context_encodings = cuda(context_encodings)
+        usr_emb = cuda(usr_emb)
+        word_emb = cuda(word_emb)
 
-            beam_size = self._beam_size
-            max_len_generated = self._max_len_generated
-            num_layers = self._num_layers
-            state_size = self._state_size
-            batch_size = context_encodings.size(0)
+        beam_size = self._beam_size
+        max_len_generated = self._max_len_generated
+        num_layers = self._num_layers
+        state_size = self._state_size
+        batch_size = context_encodings.size(0)
 
-            # End of generated sentence : EOS token
-            initial_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
-            stop_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
+        # End of generated sentence : EOS token
+        initial_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        stop_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
 
-            usr_emb = usr_emb.unsqueeze(1)
-            context_encodings = context_encodings.unsqueeze(1)
+        usr_emb = usr_emb.unsqueeze(1)
+        context_encodings = context_encodings.unsqueeze(1)
 
-            # Viterbi tensors :
-            # dim 0 : 0 -> current word index, 1 -> previous word index leading to this word.
-            s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
-            s_idx_w_idx_logproba= tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
-            s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
-            s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
+        # Viterbi tensors :
+        # dim 0 : 0 -> current word index, 1 -> previous word index leading to this word.
+        s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
+        s_idx_w_idx_logproba= tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
+        s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
+        s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
 
-            # First step from START to first probable words :
+        # First step from START to first probable words :
 
-            lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
-            lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
 
-            current_w_emb = word_emb(initial_word.unsqueeze(1))
+        current_w_emb = word_emb(initial_word.unsqueeze(1))
+        embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
+        transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
+        next_wrd = transition_index.unsqueeze(0)
+        prev_idx =  tovar(T.zeros(transition_index.size()).long().unsqueeze(0))
+        nxt_s_idx_w_idx = T.cat((next_wrd, prev_idx), 0)
+        nxt_s_idx_w_idx = nxt_s_idx_w_idx.unsqueeze(1)
+        s_idx_w_idx= T.cat((s_idx_w_idx, nxt_s_idx_w_idx), 1)
+        s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, transition_probabilities.unsqueeze(0)), 0)
+        s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+        s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+
+        usr_emb = usr_emb.expand(usr_emb.size(0), beam_size, usr_emb.size(2))
+        context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
+
+        s_idx = 1
+
+        # Add constraint argmax probability is end word for all batch.
+
+        while s_idx < max_len_generated - 1:
+            current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-            transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
-            next_wrd = transition_index.unsqueeze(0)
-            prev_idx =  tovar(T.zeros(transition_index.size()).long().unsqueeze(0))
-            nxt_s_idx_w_idx = T.cat((next_wrd, prev_idx), 0)
-            nxt_s_idx_w_idx = nxt_s_idx_w_idx.unsqueeze(1)
-            s_idx_w_idx= T.cat((s_idx_w_idx, nxt_s_idx_w_idx), 1)
-            s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, transition_probabilities.unsqueeze(0)), 0)
-            s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
-            s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
+            transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
 
-            usr_emb = usr_emb.expand(usr_emb.size(0), beam_size, usr_emb.size(2))
-            context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
+            transition_index = transition_index.view(batch_size, -1)
 
-            s_idx = 1
+            transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
+            transition_probabilities.add_(s_idx_w_idx_logproba[s_idx].unsqueeze(2).expand_as(transition_probabilities))
+            transition_probabilities = transition_probabilities.view(batch_size, -1)
 
-            # Add constraint argmax probability is end word for all batch.
+            lstm_h = current_state[0].view(num_layers, -1, beam_size, state_size)
+            lstm_c = current_state[1].view(num_layers, -1, beam_size, state_size)
 
-            while s_idx < max_len_generated - 1:
-                current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
-                embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-                transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+            best_transition_probabilities, best_transition_indexes = transition_probabilities.topk(beam_size, 1)
+            next_words = T.LongTensor(best_transition_indexes.size())
 
-                transition_index = transition_index.view(batch_size, -1)
+            best_transition_indexes = best_transition_indexes.data
+            best_transition_return_index = best_transition_indexes / 13
 
-                transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
-                transition_probabilities.add_(s_idx_w_idx_logproba[s_idx].unsqueeze(2).expand_as(transition_probabilities))
-                transition_probabilities = transition_probabilities.view(batch_size, -1)
+            for i in range(best_transition_indexes.size(0)):
+                next_words[i] = transition_index[i][best_transition_indexes[i]].data
+                s_idx_w_idx_lstm_h[:,i,:,:].data = lstm_h[:,:,best_transition_return_index[i],:][:,i,:,:].data
+                s_idx_w_idx_lstm_c[:, i, :, :].data = lstm_c[:, :, best_transition_return_index[i], :][:, i, :, :].data
 
-                lstm_h = current_state[0].view(num_layers, -1, beam_size, state_size)
-                lstm_c = current_state[1].view(num_layers, -1, beam_size, state_size)
+            s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, best_transition_probabilities.unsqueeze(0)), 0)
 
-                best_transition_probabilities, best_transition_indexes = transition_probabilities.topk(beam_size, 1)
-                next_words = T.LongTensor(best_transition_indexes.size())
+            best_transition_indexes = best_transition_indexes.unsqueeze(0).unsqueeze(0)
+            next_words = next_words.unsqueeze(0).unsqueeze(0)
+            s_idx_w_idx = T.cat((s_idx_w_idx, T.cat((next_words, best_transition_indexes / beam_size), 0)), 1)
 
-                best_transition_indexes = best_transition_indexes.data
-                best_transition_return_index = best_transition_indexes / 13
+            s_idx += 1
 
-                for i in range(best_transition_indexes.size(0)):
-                    next_words[i] = transition_index[i][best_transition_indexes[i]].data
-                    s_idx_w_idx_lstm_h[:,i,:,:].data = lstm_h[:,:,best_transition_return_index[i],:][:,i,:,:].data
-                    s_idx_w_idx_lstm_c[:, i, :, :].data = lstm_c[:, :, best_transition_return_index[i], :][:, i, :, :].data
+        # Now we go through the viterbi matrix backward to get the best sentence :
 
-                s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, best_transition_probabilities.unsqueeze(0)), 0)
+        s_idx_w_idx = s_idx_w_idx.data
+        answers = T.zeros(batch_size, s_idx + 1).long()
 
-                best_transition_indexes = best_transition_indexes.unsqueeze(0).unsqueeze(0)
-                next_words = next_words.unsqueeze(0).unsqueeze(0)
-                s_idx_w_idx = T.cat((s_idx_w_idx, T.cat((next_words, best_transition_indexes / beam_size), 0)), 1)
+        best_words, best_idx = s_idx_w_idx[0, s_idx].max(1)
+        idx_previous = self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], best_idx)
+        answers[:, s_idx] = best_words
 
-                s_idx += 1
-
-            # Now we go through the viterbi matrix backward to get the best sentence :
-
-            s_idx_w_idx = s_idx_w_idx.data
-            answers = T.zeros(batch_size, s_idx + 1).long()
-
-            best_words, best_idx = s_idx_w_idx[0, s_idx].max(1)
-            idx_previous = self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], best_idx)
-            answers[:, s_idx] = best_words
-
-            while s_idx >= 1:
-                s_idx -= 1
-                answers[:, s_idx] = self.mat_idx_vector_to_vector(s_idx_w_idx[0,s_idx], idx_previous)
-                idx_previous =  self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], idx_previous)
+        while s_idx >= 1:
+            s_idx -= 1
+            answers[:, s_idx] = self.mat_idx_vector_to_vector(s_idx_w_idx[0,s_idx], idx_previous)
+            idx_previous =  self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], idx_previous)
 
         answers = cuda(answers)
         return answers
@@ -487,7 +500,7 @@ enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_l
 context = cuda(Context(size_sentence, size_context, num_layers = args.context_layers))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
                        decoder_max_generated, decoder_beam_size, state_size=decoder_size_sentence, num_layers = args.decoder_layers))
-
+attention = cuda(Attention(size_sentence, args.max_turns_allowed, num_layers = 1))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
 
@@ -563,6 +576,7 @@ while True:
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
+        attn = attention(encodings)
         ctx, _ = context(encodings, turns)
         if itr % 10 == 7 and args.adversarial_sample == 1:
             scale = float(np.exp(-np.random.uniform(2, 6)))
