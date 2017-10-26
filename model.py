@@ -117,7 +117,7 @@ class Context(NN.Module):
         embed = cuda(embed)
         embed = embed.view(batch_size, -1, context_size), (h, c)
         ctx = T.cat((embed[0], attn),2)
-        return ctx, False
+        return ctx, embed[1]
 def inverseHackTorch(tens):
     idx = [i for i in range(tens.size(0)-1, -1, -1)]
     idx = T.LongTensor(idx)
@@ -147,7 +147,8 @@ class Attention(NN.Module):
         attention_heads = self.softmax(attention_heads)
         attention_heads = attention_heads.view(
                 batch_size, num_turns, max_turns_allowed).unsqueeze(3)
-        attn_shifted = inverseHackTorch(attention_heads.permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
+        attn_shifted = T.cat([T.cat((attention_heads[:,i,i:,:], attention_heads[:,i,:i,:]),2)
+                for i in range(attention_heads.size()[1])],1)
         sent_encodings = sent_encodings.unsqueeze(2)
         return (sent_encodings * attn_shifted).sum(1)
 
