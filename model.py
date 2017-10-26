@@ -127,7 +127,6 @@ class Attention(NN.Module):
     def __init__(self, size_sentence, max_turns_allowed, num_layers = 1):
         NN.Module.__init__(self)
         self._size_sentence = size_sentence
-        max_turns_allowed += 20
         self._max_turns_allowed = max_turns_allowed
         self._num_layers = num_layers
 
@@ -442,14 +441,14 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=2)
 parser.add_argument('--context_layers', type=int, default=2)
-parser.add_argument('--size_context', type=int, default=5)
-parser.add_argument('--size_sentence', type=int, default=7)
-parser.add_argument('--decoder_size_sentence', type=int, default=9)
+parser.add_argument('--size_context', type=int, default=128)
+parser.add_argument('--size_sentence', type=int, default=64)
+parser.add_argument('--decoder_size_sentence', type=int, default=128)
 parser.add_argument('--decoder_beam_size', type=int, default=16)
 parser.add_argument('--decoder_max_generated', type=int, default=18)
-parser.add_argument('--size_usr', type=int, default=19)
-parser.add_argument('--size_wd', type=int, default=13)
-parser.add_argument('--batchsize', type=int, default=3)
+parser.add_argument('--size_usr', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=50)
+parser.add_argument('--batchsize', type=int, default=16)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
@@ -663,7 +662,7 @@ while True:
                     itr
                     )
         # Beam search test
-        if itr % 2 == 0:
+        if itr % 100 == 0:
             words = tonumpy(words_padded.data[0, ::2])
             sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
             initiator = speaker_padded.data[0, 0]
