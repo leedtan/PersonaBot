@@ -102,7 +102,7 @@ class Context(NN.Module):
 
     def forward(self, sent_encodings, length, initial_state=None):
         if self._attention_enabled:
-            attn = self.attention(sent_encodings)
+            attn = self.attention(sent_encodings, length)
         sent_encodings = cuda(sent_encodings)
         length = cuda(length)
         initial_state = cuda(initial_state)
@@ -126,9 +126,9 @@ class Context(NN.Module):
             ctx = embed[0]
         return ctx, embed[1]
 def inverseHackTorch(tens):
-    idx = [i for i in range(tens.size(1)-1,-1, -1)]
+    idx = [i for i in range(tens.size(2)-1,-1, -1)]
     idx = cuda(T.LongTensor(idx))
-    inverted_tensor = tens[:,idx,:]
+    inverted_tensor = tens[:,:,idx]
     return inverted_tensor
 class Attention(NN.Module):
     def __init__(self, size_sentence, max_turns_allowed, num_layers = 1):
@@ -144,7 +144,7 @@ class Attention(NN.Module):
         init_weights(self.F)
         self.softmax = NN.Softmax()
 
-    def forward(self, sent_encodings):
+    def forward(self, sent_encodings, turns):
         batch_size, num_turns, size_sentence = sent_encodings.size()
         sent_encodings = cuda(sent_encodings)
         max_turns_allowed = self._max_turns_allowed
@@ -153,19 +153,37 @@ class Attention(NN.Module):
                 batch_size * num_turns, size_sentence))
         attention_heads = attention_heads.view(
                 batch_size, -1, max_turns_allowed)[
-                :,:,:num_turns].contiguous().view(
+                :,:,:num_turns].contiguous()
+        #Attention heads is now:
+        #batch_size by num_turns in sent by num_turns (max num turns)
+        #will become
+        #batch_size by num_turns by sent by 1
+        #sent_encodings is:
+        #batch_size by num_turns by size_sentence
+        #sent_encodings will become:
+        #batch_size by num_turns by (attention futures) by size_sentence
+        #Need to chop off attention at
+        #batch size by num_turns by (UP TO current sentence) by 1
+        attention_heads = T.cat([
+                T.cat((inverseHackTorch(attention_heads[:,i:i+1,:i+1]),
+                       tovar(T.zeros((batch_size, 1, num_turns - i-1)))),2)
+                if i < num_turns - 1 else inverseHackTorch(attention_heads[:,i:i+1,:i+1])
+                for i in range(num_turns)], 1)
+        attention_heads = attention_heads.view(
                 batch_size * num_turns, -1)
         attention_heads = self.softmax(attention_heads)
         attention_heads = attention_heads.view(
                 batch_size, num_turns, -1).unsqueeze(3)
+        '''
         attn_shifted = T.cat([
                 T.cat((inverseHackTorch(attention_heads[:,i,:i+1,:]).unsqueeze(1),
-                attention_heads[:,i,i+1:,:].unsqueeze(1)),2)
-                if i < attention_heads.size()[1]-2 else 
+                T.zeros((batch_size, 1, size_sentence - i, 1))),2)
+                if i < attention_heads.size()[1]-1 else 
                 inverseHackTorch(attention_heads[:,i,:,:]).unsqueeze(1)
                 for i in range(attention_heads.size()[1])],1)
+        '''
         sent_encodings = sent_encodings.unsqueeze(2)
-        return (sent_encodings * attn_shifted).sum(1)
+        return (sent_encodings * attention_heads).sum(1)
 
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
