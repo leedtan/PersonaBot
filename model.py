@@ -119,9 +119,9 @@ class Context(NN.Module):
         ctx = T.cat((embed[0], attn),2)
         return ctx, embed[1]
 def inverseHackTorch(tens):
-    idx = [i for i in range(tens.size(0)-1, -1, -1)]
+    idx = [i for i in range(tens.size(1)-1,-1, -1)]
     idx = T.LongTensor(idx)
-    inverted_tensor = tens[idx]
+    inverted_tensor = tens[:,idx,:]
     return inverted_tensor
 class Attention(NN.Module):
     def __init__(self, size_sentence, max_turns_allowed, num_layers = 1):
@@ -147,7 +147,11 @@ class Attention(NN.Module):
         attention_heads = self.softmax(attention_heads)
         attention_heads = attention_heads.view(
                 batch_size, num_turns, max_turns_allowed).unsqueeze(3)
-        attn_shifted = T.cat([T.cat((attention_heads[:,i,i:,:], attention_heads[:,i,:i,:]),2)
+        attn_shifted = T.cat([
+                T.cat((inverseHackTorch(attention_heads[:,i,:i+1,:]).unsqueeze(1),
+                attention_heads[:,i,i+1:,:].unsqueeze(1)),2)
+                if i < attention_heads.size()[1]-2 else 
+                inverseHackTorch(attention_heads[:,i,:,:]).unsqueeze(1)
                 for i in range(attention_heads.size()[1])],1)
         sent_encodings = sent_encodings.unsqueeze(2)
         return (sent_encodings * attn_shifted).sum(1)
