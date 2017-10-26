@@ -76,7 +76,7 @@ class Encoder(NN.Module):
         return h[:, -2:].contiguous().view(batch_size, output_size)
 
 class Context(NN.Module):
-    def __init__(self,in_size, context_size, num_layers=1):
+    def __init__(self,in_size, context_size, attention, num_layers=1):
         NN.Module.__init__(self)
         self._context_size = context_size
         self._in_size = in_size
@@ -88,6 +88,7 @@ class Context(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
+        self.attention = attention
         init_lstm(self.rnn)
 
     def zero_state(self, batch_size):
@@ -97,6 +98,7 @@ class Context(NN.Module):
         return initial_state
 
     def forward(self, sent_encodings, length, initial_state=None):
+        attn = self.attention(sent_encodings)
         sent_encodings = cuda(sent_encodings)
         length = cuda(length)
         initial_state = cuda(initial_state)
@@ -113,9 +115,14 @@ class Context(NN.Module):
         #h = h.permute(1, 0, 2)
 
         embed = cuda(embed)
-        h, c = cuda((h, c))
-        return embed.view(batch_size, -1, context_size), (h, c)
-
+        embed = embed.view(batch_size, -1, context_size), (h, c)
+        ctx = T.cat((embed[0], attn),2)
+        return ctx, False
+def inverseHackTorch(tens):
+    idx = [i for i in range(tens.size(0)-1, -1, -1)]
+    idx = T.LongTensor(idx)
+    inverted_tensor = tens[idx]
+    return inverted_tensor
 class Attention(NN.Module):
     def __init__(self, size_sentence, max_turns_allowed, num_layers = 1):
         NN.Module.__init__(self)
@@ -128,6 +135,7 @@ class Attention(NN.Module):
             NN.LeakyReLU(),
             NN.Linear(size_sentence, max_turns_allowed))
         init_weights(self.F)
+        self.softmax = NN.Softmax()
 
     def forward(self, sent_encodings):
         batch_size, num_turns, size_sentence = sent_encodings.size()
@@ -136,13 +144,15 @@ class Attention(NN.Module):
         num_layers = self._num_layers
         attention_heads = self.F(sent_encodings.view(
                 batch_size * num_turns, size_sentence))
+        attention_heads = self.softmax(attention_heads)
         attention_heads = attention_heads.view(
-                batch_size, num_turns, max_turns_allowed)
-        
-        return sent_encodings
+                batch_size, num_turns, max_turns_allowed).unsqueeze(3)
+        attn_shifted = inverseHackTorch(attention_heads.permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
+        sent_encodings = sent_encodings.unsqueeze(2)
+        return (sent_encodings * attn_shifted).sum(1)
 
 class Decoder(NN.Module):
-    def __init__(self,size_usr, size_wd, context_size, num_words, max_len_generated ,beam_size,
+    def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
                  state_size = None, num_layers=1):
         NN.Module.__init__(self)
         self._num_words = num_words
@@ -153,11 +163,11 @@ class Decoder(NN.Module):
         self._size_usr = size_usr
         self._num_layers = num_layers
         if state_size == None:
-            state_size = size_usr + size_wd + context_size
+            state_size = size_usr + size_wd + context_size + size_sentence
         self._state_size = state_size
 
         self.rnn = NN.LSTM(
-                size_wd + size_usr + context_size,
+                size_wd + size_usr + context_size + size_sentence,
                 state_size,
                 num_layers,
                 bidirectional=False,
@@ -497,10 +507,12 @@ user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
 #word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
-context = cuda(Context(size_sentence, size_context, num_layers = args.context_layers))
-decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
-                       decoder_max_generated, decoder_beam_size, state_size=decoder_size_sentence, num_layers = args.decoder_layers))
 attention = cuda(Attention(size_sentence, args.max_turns_allowed, num_layers = 1))
+context = cuda(Context(size_sentence, size_context, attention, 
+               num_layers = args.context_layers))
+decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, num_words+1,
+               decoder_max_generated, decoder_beam_size, 
+               state_size=decoder_size_sentence, num_layers = args.decoder_layers))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
 
@@ -576,7 +588,7 @@ while True:
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
-        attn = attention(encodings)
+        #attn = attention(encodings)
         ctx, _ = context(encodings, turns)
         if itr % 10 == 7 and args.adversarial_sample == 1:
             scale = float(np.exp(-np.random.uniform(2, 6)))
