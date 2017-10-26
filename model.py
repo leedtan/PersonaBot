@@ -127,7 +127,7 @@ class Context(NN.Module):
         return ctx, embed[1]
 def inverseHackTorch(tens):
     idx = [i for i in range(tens.size(1)-1,-1, -1)]
-    idx = T.LongTensor(idx)
+    idx = cuda(T.LongTensor(idx))
     inverted_tensor = tens[:,idx,:]
     return inverted_tensor
 class Attention(NN.Module):
@@ -460,7 +460,7 @@ parser.add_argument('--decoder_beam_size', type=int, default=16)
 parser.add_argument('--decoder_max_generated', type=int, default=18)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=16)
+parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
