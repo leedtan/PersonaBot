@@ -76,11 +76,13 @@ class Encoder(NN.Module):
         return h[:, -2:].contiguous().view(batch_size, output_size)
 
 class Context(NN.Module):
-    def __init__(self,in_size, context_size, attention, num_layers=1):
+    def __init__(self,in_size, context_size, attention, num_layers=1,
+                 attention_enabled = True):
         NN.Module.__init__(self)
         self._context_size = context_size
         self._in_size = in_size
         self._num_layers = num_layers
+        self._attention_enabled = attention_enabled
 
         self.rnn = NN.LSTM(
                 in_size,
@@ -88,7 +90,8 @@ class Context(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.attention = attention
+        if self._attention_enabled:
+            self.attention = attention
         init_lstm(self.rnn)
 
     def zero_state(self, batch_size):
@@ -98,7 +101,8 @@ class Context(NN.Module):
         return initial_state
 
     def forward(self, sent_encodings, length, initial_state=None):
-        attn = self.attention(sent_encodings)
+        if self._attention_enabled:
+            attn = self.attention(sent_encodings)
         sent_encodings = cuda(sent_encodings)
         length = cuda(length)
         initial_state = cuda(initial_state)
@@ -116,7 +120,10 @@ class Context(NN.Module):
 
         embed = cuda(embed)
         embed = embed.view(batch_size, -1, context_size), (h, c)
-        ctx = T.cat((embed[0], attn),2)
+        if self._attention_enabled:
+            ctx = T.cat((embed[0], attn),2)
+        else:
+            ctx = embed[0]
         return ctx, embed[1]
 def inverseHackTorch(tens):
     idx = [i for i in range(tens.size(1)-1,-1, -1)]
@@ -162,7 +169,7 @@ class Attention(NN.Module):
 
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
-                 state_size = None, num_layers=1):
+                 state_size = None, num_layers=1, attention_enabled=True):
         NN.Module.__init__(self)
         self._num_words = num_words
         self._beam_size = beam_size
@@ -171,12 +178,17 @@ class Decoder(NN.Module):
         self._size_wd = size_wd
         self._size_usr = size_usr
         self._num_layers = num_layers
+        self._attention_enabled = attention_enabled
+        if self._attention_enabled:
+            in_size = size_usr + size_wd + context_size + size_sentence
+        else:
+            in_size = size_usr + size_wd + context_size
         if state_size == None:
-            state_size = size_usr + size_wd + context_size + size_sentence
+            state_size = in_size
         self._state_size = state_size
 
         self.rnn = NN.LSTM(
-                size_wd + size_usr + context_size + size_sentence,
+                in_size,
                 state_size,
                 num_layers,
                 bidirectional=False,
@@ -459,6 +471,7 @@ parser.add_argument('--max_sentence_length_allowed', type=int, default=20)
 parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
+parser.add_argument('--attention_enabled', type=bool, default=True)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
@@ -518,10 +531,13 @@ word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
 attention = cuda(Attention(size_sentence, args.max_turns_allowed, num_layers = 1))
 context = cuda(Context(size_sentence, size_context, attention, 
-               num_layers = args.context_layers))
+               num_layers = args.context_layers, 
+               attention_enabled = args.attention_enabled))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, num_words+1,
                decoder_max_generated, decoder_beam_size, 
-               state_size=decoder_size_sentence, num_layers = args.decoder_layers))
+               state_size=decoder_size_sentence, 
+               num_layers = args.decoder_layers,
+               attention_enabled = args.attention_enabled))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
 
