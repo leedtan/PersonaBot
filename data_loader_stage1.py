@@ -17,7 +17,7 @@ class UbuntuDialogDataset(Dataset):
                  usercount_pkl='usercount.pkl',
                  turncount_pkl='turncount.pkl',
                  max_sentence_lengths_pkl='max_sentence_lengths.pkl',
-                 vocab_size=89996,          # excluding padding, <unknown>, <eos>, <start>
+                 vocab_size=159996,          # excluding padding, <unknown>, <eos>, <start>
                  user_size=None,
                  min_word_occurrence=None,
                  min_user_occurrence=5,
