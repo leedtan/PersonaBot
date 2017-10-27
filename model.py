@@ -629,7 +629,7 @@ while True:
                     usr_std, wd_std, sent_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
-            encodings = tovar((encodings + tovar(enc_adv)).data)
+            encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         #attn = attention(encodings)
         ctx, _ = context(encodings, turns)
