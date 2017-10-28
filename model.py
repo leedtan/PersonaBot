@@ -136,7 +136,7 @@ class Context(NN.Module):
         #h = h.permute(1, 0, 2)
 
         embed = cuda(embed)
-        embed = embed.view(batch_size, -1, context_size), (h, c)
+        embed = embed.view(batch_size, -1, context_size), h
         if self._attention_enabled:
             #ctx is batchsize, num_turns decode, size_context + size_sentence
             #wds_h words in batch (real), batch_size * turns in sample, size_sentence
@@ -222,8 +222,8 @@ class Context(NN.Module):
                     attn_sent_masked.view(batch_size * num_turns, num_turns)).view(
                             batch_size, num_turns, num_turns, 1)
             usrs_and_ctx_attnended = usrs_and_ctx * attn_sent_softmax
-            
-            
+            usrs_and_ctx_rolled_up_to_ctx = usrs_and_ctx_attnended.sum(2)
+            ctx = T.cat((ctx, usrs_and_ctx_rolled_up_to_ctx),2)
             
             #bs, num_turns (for attention head), num_turns, size_sentence
         else:
@@ -303,7 +303,7 @@ class Decoder(NN.Module):
         self._num_layers = num_layers
         self._attention_enabled = attention_enabled
         if self._attention_enabled:
-            in_size = size_usr + size_wd + context_size + size_sentence
+            in_size = size_usr + size_wd + context_size*2 + size_sentence*2 + size_usr
         else:
             in_size = size_usr + size_wd + context_size
         if state_size == None:
