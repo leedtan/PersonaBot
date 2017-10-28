@@ -31,7 +31,7 @@ from collections import Counter
 from data_loader_stage1 import *
 
 from adv import *
-#from test import test
+from test import test
 
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
