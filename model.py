@@ -96,14 +96,12 @@ class Context(NN.Module):
             self.attn_wd = NN.Sequential(
                 NN.Linear(size_sentence * 2 + size_context, size_sentence),
                 NN.LeakyReLU(),
-                NN.Linear(size_sentence, 1),
-                NN.Softplus())
+                NN.Linear(size_sentence, 1))
             self.attn_sent = NN.Sequential(
                 NN.Linear(size_sentence + size_sentence + context_size + size_usr * 2, 
                           size_sentence),
                 NN.LeakyReLU(),
-                NN.Linear(size_sentence, 1),
-                NN.Softplus())
+                NN.Linear(size_sentence, 1),)
             init_weights(self.attention)
             init_weights(self.attn_wd)
             init_weights(self.attn_sent)
