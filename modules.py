@@ -286,9 +286,12 @@ def weighted_softmax(logits, weights):
     Computes:
     p[i] = (w[i] * exp(l[i])) / sum(w[j] * exp(l[j]))
     '''
-    wl = T.exp(logits) * weights
-    wl = wl / (wl.sum(1)+1e-8).unsqueeze(1)
-    return wl
+    all_0 = (weights == 0).prod(1)
+    wl = logits + weights.log()
+    exp = (wl - wl.max(1, keepdim=True)[0]).exp()
+    f = exp / exp.sum(1, keepdim=True)
+    f[all_0.data.nonzero()[:, 0]] = 0
+    return f
 
 
 def init_glove(word_emb, vcb, ivcb, dataroot):
