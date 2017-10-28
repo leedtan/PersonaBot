@@ -180,8 +180,9 @@ class Context(NN.Module):
                     batch_size, num_turns, wds_in_sample, num_turns, size_sentence)
             attn_wd_masked = attn_wd * mask
             # FIXME: variable length softmax
-            attn_wd_masked = self.softmax(
+            attn_wd_masked = weighted_softmax(
                     attn_wd_masked.permute(0, 1, 3, 2).contiguous().view(
+                            batch_size * num_turns * num_turns, wds_in_sample), mask.permute(0,1,3,2).contiguous().view(
                             batch_size * num_turns * num_turns, wds_in_sample)).view(
                             batch_size, num_turns, num_turns,wds_in_sample,1).permute(0,1,3,2,4)
             at_weighted_wds = attn_wd_masked * wds_h_attn_expanded 
