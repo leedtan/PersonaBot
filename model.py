@@ -31,7 +31,7 @@ from collections import Counter
 from data_loader_stage1 import *
 
 from adv import *
-from test import test
+#from test import test
 
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
@@ -96,14 +96,12 @@ class Context(NN.Module):
             self.attn_wd = NN.Sequential(
                 NN.Linear(size_sentence * 2 + size_context, size_sentence),
                 NN.LeakyReLU(),
-                NN.Linear(size_sentence, 1),
-                NN.Softplus())
+                NN.Linear(size_sentence, 1))
             self.attn_sent = NN.Sequential(
                 NN.Linear(size_sentence + size_sentence + context_size + size_usr * 2, 
                           size_sentence),
                 NN.LeakyReLU(),
-                NN.Linear(size_sentence, 1),
-                NN.Softplus())
+                NN.Linear(size_sentence, 1),)
             init_weights(self.attention)
             init_weights(self.attn_wd)
             init_weights(self.attn_sent)
@@ -196,7 +194,9 @@ class Context(NN.Module):
 
             ctx_for_message_attn = ctx.unsqueeze(2).expand(
                     batch_size, num_turns, num_turns, size_context + size_sentence)
-            usrs_b_expanded_for_ctx = usrs_b.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_usr)
+            usrs_b_expanded_for_ctx = T.cat(
+                    (usrs_b[:,1:,:], tovar(T.zeros(batch_size, 1, size_usr))),1).contiguous().unsqueeze(2).expand(
+                            batch_size, num_turns, num_turns, size_usr)
             usrs_and_ctx = T.cat((usrs_b_expanded_for_ctx, ctx_for_message_attn),3)
 
             # FIXME
