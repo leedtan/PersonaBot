@@ -287,9 +287,7 @@ def weighted_softmax(logits, weights):
     p[i] = (w[i] * exp(l[i])) / sum(w[j] * exp(l[j]))
     '''
     wl = logits + weights.log()    # Contains -inf
-    exp = (wl - wl.max(1, keepdim=True)[0])
-    res = exp / exp.sum(1, keepdim=True)
-    return res
+    return F.softmax(wl)
 
 
 def init_glove(word_emb, vcb, ivcb, dataroot):
