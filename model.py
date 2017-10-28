@@ -99,7 +99,7 @@ class Context(NN.Module):
                 NN.Linear(size_sentence, 1),
                 NN.Softplus())
             self.attn_sent = NN.Sequential(
-                NN.Linear(size_sentence + size_sentence + context_size,# + size_usr * 2, 
+                NN.Linear(size_sentence + size_sentence + context_size + size_usr * 2, 
                           size_sentence),
                 NN.LeakyReLU(),
                 NN.Linear(size_sentence, 1),
@@ -163,7 +163,7 @@ class Context(NN.Module):
                     batch_size, num_turns, wds_in_sample, num_turns)
             #wipe out after sentence_lengths_padded in dimension 2 conditioned on batch and dim 3
             #wipe out after length in dimension 1 conditioned on batch
-            #wipe out after index 1 in dimension 3 conditioned on length
+            #wipe out after index 1 in dimension 3 conditioned on length or length in dim 1
             size = attn_wd.size()
             mask = T.ones(*size)
 
@@ -173,7 +173,8 @@ class Context(NN.Module):
                         for i_sent in range(size[3]):
                             if ((sentence_lengths_padded[i_b, i_sent] < i_wd)
                                     or (length[i_b] < i_head)
-                                    or (i_sent > i_head)):
+                                    or (i_head < i_sent)
+                                    or (length[i_b] < i_sent)):
                                 mask[i_b, i_head, i_wd, i_sent] = 0
             mask = tovar(mask)
             #mask2 = mask_3d(attn_wd[:,0,:,:].size(), sentence_lengths_padded)
@@ -189,15 +190,41 @@ class Context(NN.Module):
             at_weighted_wds = attn_wd_masked * wds_h_attn_expanded 
             at_weighted_sent = at_weighted_wds.sum(2)
             _, _, size_usr = usrs_b.size()
-            usrs_b_expanded = usrs_b.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_usr)
-            usrs_messages = T.cat((usrs_b_expanded, at_weighted_sent),3)
-            ctx_for_message_attn = ctx.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context + size_sentence)
-            ctx_sent_combined = T.cat((at_weighted_sent, ctx_for_message_attn),3)
+            
+            usrs_b_expanded_for_messages = usrs_b.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_usr)
+            usrs_and_messages = T.cat((usrs_b_expanded_for_messages, at_weighted_sent),3)
+            
+            ctx_for_message_attn = ctx.unsqueeze(2).expand(
+                    batch_size, num_turns, num_turns, size_context + size_sentence)
+            usrs_b_expanded_for_ctx = usrs_b.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_usr)
+            usrs_and_ctx = T.cat((usrs_b_expanded_for_ctx, ctx_for_message_attn),3)
+
+            ctx_and_messages = T.cat((usrs_and_messages, usrs_and_ctx),3)
             #shape bs, turns, turns, ctx + sent * 2
-            ctx_sent_combined = ctx_sent_combined.view(-1, size_context + size_sentence*2)
-            attn_rolled_up_sent = self.attn_sent(ctx_sent_combined).view(
+            ctx_and_messages = ctx_and_messages.view(-1, size_context + size_sentence*2+size_usr*2)
+            attn_rolled_up_sent = self.attn_sent(ctx_and_messages).view(
                     batch_size, num_turns, num_turns)
-            blah = 3
+            #wipe out after length in dimension 1 conditioned on batch
+            #wipe out after index 1 in dimension 2 conditioned on length
+            size = attn_rolled_up_sent.size()
+            mask_sent = T.ones(*size)
+
+            for i_b in range(size[0]):
+                for i_head in range(size[1]):
+                    for i_sent in range(size[2]):
+                        if ((length[i_b] < i_head)
+                                or (i_head < i_sent)
+                                or (length[i_b] < i_sent)):
+                            mask_sent[i_b, i_head, i_sent] = 0
+            mask_sent = tovar(mask_sent)
+            attn_sent_masked = attn_rolled_up_sent * mask_sent
+            attn_sent_softmax = self.softmax(
+                    attn_sent_masked.view(batch_size * num_turns, num_turns)).view(
+                            batch_size, num_turns, num_turns, 1)
+            usrs_and_ctx_attnended = usrs_and_ctx * attn_sent_softmax
+            
+            
+            
             #bs, num_turns (for attention head), num_turns, size_sentence
         else:
             ctx = embed[0]
