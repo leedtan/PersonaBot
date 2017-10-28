@@ -90,6 +90,7 @@ class Context(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
+        self.softmax = NN.Softmax()
         if self._attention_enabled:
             self.attention = attention
             self.attn_wd = NN.Sequential(
@@ -163,24 +164,29 @@ class Context(NN.Module):
             #wipe out after length in dimension 1 conditioned on batch
             #wipe out after index 1 in dimension 3 conditioned on length
             size = attn_wd.size()
-            mask = T.zeros(*size)
+            mask = T.ones(*size)
 
-            for i_b in range(size[1]):
+            for i_b in range(size[0]):
                 for i_head in range(size[1]):
                     for i_wd in range(size[2]):
                         for i_sent in range(size[3]):
-                            if (sentence_lengths_padded[i_b, i_sent] > i_wd
-                                or :
-                                mask[i_b, i_heaad, i_wd, i_sent] = 0
+                            if ((sentence_lengths_padded[i_b, i_sent] < i_wd)
+                                    or (length[i_b] < i_head)
+                                    or (i_sent > i_head)):
+                                mask[i_b, i_head, i_wd, i_sent] = 0
+            mask = tovar(mask)
             #mask2 = mask_3d(attn_wd[:,0,:,:].size(), sentence_lengths_padded)
             #mask13 = mask_4d(wds_b[:,0,:,:,:].size(), length , sentence_lengths_padded)
             
             wds_h_attn_expanded = wds_h_attn_expanded.view(
                     batch_size, num_turns_decode, wds_in_sample, num_turns_decode, size_sentence)
-            wds_h_attn = 1
-            ads_weighted = attn_wd * wds_h_attn 
+            attn_wd_masked = attn_wd * mask
+            attn_wd_masked = self.softmax(
+                    attn_wd_masked.view(batch_size * num_turns_decode * wds_in_sample, num_turns_decode)).view(
+                            batch_size, num_turns_decode, wds_in_sample, num_turns_decode,1)
+            ads_weighted_wds = attn_wd_masked * wds_h_attn_expanded 
+            ads_weighted_sentences = ads_weighted_wds.sum(4)
             #bs, num_turns_decode, wds in sample, num_turns_decode, size_sentence
-            ads_weighted = 1
         else:
             ctx = embed[0]
         return ctx, embed[1].contiguous()
