@@ -118,6 +118,7 @@ class Context(NN.Module):
                 wds_h, usrs_b, initial_state=None):
         if self._attention_enabled:
             attn = self.attention(sent_encs, length)
+            # attn: batch_size, max_turns, sentence_encoding_size
         sent_encs = cuda(sent_encs)
         length = cuda(length)
         initial_state = cuda(initial_state)
@@ -131,9 +132,10 @@ class Context(NN.Module):
         sent_encs = sent_encs.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encs, length, initial_state)
         embed = cuda(embed.permute(1,0,2).contiguous())
+        # embed is now: batch_size, max_turns, context_size
         if self._attention_enabled:
             #ctx is batchsize, num_turns decode, size_context + size_sentence
-            #wds_h words in batch (real), batch_size * turns in sample, size_sentence
+            #wds_h maximum words in batch (real), batch_size * maximum turns in sample, size_sentence
             ctx = T.cat((embed, attn),2)
             batch_size, num_turns, _ = ctx.size()
             wds_in_sample, _, size_sentence = wds_h.size()
@@ -177,22 +179,25 @@ class Context(NN.Module):
             wds_h_attn_expanded = wds_h_attn_expanded.view(
                     batch_size, num_turns, wds_in_sample, num_turns, size_sentence)
             attn_wd_masked = attn_wd * mask
+            # FIXME: variable length softmax
             attn_wd_masked = self.softmax(
                     attn_wd_masked.permute(0, 1, 3, 2).contiguous().view(
                             batch_size * num_turns * num_turns, wds_in_sample)).view(
                             batch_size, num_turns, num_turns,wds_in_sample,1).permute(0,1,3,2,4)
             at_weighted_wds = attn_wd_masked * wds_h_attn_expanded 
             at_weighted_sent = at_weighted_wds.sum(2)
+            # (batch_size, num_turns, num_turns, sent_encoding_size)
             _, _, size_usr = usrs_b.size()
             
             usrs_b_expanded_for_messages = usrs_b.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_usr)
             usrs_and_messages = T.cat((usrs_b_expanded_for_messages, at_weighted_sent),3)
-            
+
             ctx_for_message_attn = ctx.unsqueeze(2).expand(
                     batch_size, num_turns, num_turns, size_context + size_sentence)
             usrs_b_expanded_for_ctx = usrs_b.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_usr)
             usrs_and_ctx = T.cat((usrs_b_expanded_for_ctx, ctx_for_message_attn),3)
 
+            # FIXME
             ctx_and_messages = T.cat((usrs_and_messages, usrs_and_ctx),3)
             #shape bs, turns, turns, ctx + sent * 2
             ctx_and_messages = ctx_and_messages.view(-1, size_context + size_sentence*2+size_usr*2)
@@ -212,6 +217,7 @@ class Context(NN.Module):
                             mask_sent[i_b, i_head, i_sent] = 0
             mask_sent = tovar(mask_sent)
             attn_sent_masked = attn_rolled_up_sent * mask_sent
+            # FIXME variable length softmax
             attn_sent_softmax = self.softmax(
                     attn_sent_masked.view(batch_size * num_turns, num_turns)).view(
                             batch_size, num_turns, num_turns, 1)
