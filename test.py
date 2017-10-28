@@ -179,7 +179,7 @@ def test(dataset,
 
         # Encode the current sentence from the initiator
         sentence_embed = word_embedder(sentence)
-        sentence_encoding = encoder(sentence_embed, initiator_embed, sentence_length)
+        sentence_encoding, wds_h = encoder(sentence_embed, initiator_embed, sentence_length)
 
         # Mix the sentence encoding with last context, take one step of Context RNN
         sentence_encoding = sentence_encoding.unsqueeze(1)

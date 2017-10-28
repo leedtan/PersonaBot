@@ -22,7 +22,7 @@ import numpy as np
 def_size = 64
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
-parser.add_argument('--dataroot', type=str,required=True, help='Root of the data downloaded from github')
+parser.add_argument('--dataroot', type=str, required=True, help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',required=True, help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
@@ -47,10 +47,7 @@ val_file = h5py.File(args.outputdir + 'dataset_val.h5', 'r')
 test_file = h5py.File(args.outputdir + 'dataset_test.h5', 'r')
 word2idx, idx2word = pickle.load(open(args.outputdir +  "word_dicts.p", "r" ))
 user2idx, idx2user = pickle.load(open(args.outputdir +  "user_dicts.p", "r" ))
-try:
-    os.mkdir(args.logdir)
-except:
-    pass
+
 
 if len(args.modelname) > 0:
     modelnamesave = args.modelname
@@ -174,6 +171,27 @@ class Encoder(NN.Module):
                 )
         word_emb = wordencoder(sentences)
         user_emb = userencoder(users)
+        '''
+        x = x.permute(0, 2, 1)
+        #x = x.view(32, nframes_max, frame_size)
+        max_nframes = x.size()[1]
+        x2 = x.permute(1,0,2)
+        lstm_out, (h, _) = dynamic_rnn(self.rnn, x2, nframes, initial_state)
+        lstm_out = lstm_out.permute(1, 0, 2)
+        max_nframes = lstm_out.size()[1]
+
+        classifier_out = self.classifier(lstm_out).view(batch_size, max_nframes)
+
+        h = h.permute(1, 0, 2)
+        h = h[:, -2:].contiguous().view(batch_size, state_size)
+        code = self.encoder(h)
+
+        code_unitnorm = code / (code.norm(2, 1, keepdim=True) + 1e-4)
+        c_unitnorm = c / (c.norm(2, 1, keepdim=True) + 1e-4)
+        ranking = T.bmm(code_unitnorm.unsqueeze(1), c_unitnorm.unsqueeze(2)).squeeze()
+
+        return classifier_out, ranking, nframes
+        '''
         return
 
 
