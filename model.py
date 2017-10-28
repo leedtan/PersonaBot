@@ -99,13 +99,14 @@ class Context(NN.Module):
                 NN.Linear(size_sentence, 1),
                 NN.Softplus())
             self.attn_sent = NN.Sequential(
-                NN.Linear(size_sentence + size_sentence + context_size + size_usr * 2, 
+                NN.Linear(size_sentence + size_sentence + context_size,# + size_usr * 2, 
                           size_sentence),
                 NN.LeakyReLU(),
                 NN.Linear(size_sentence, 1),
                 NN.Softplus())
             init_weights(self.attention)
             init_weights(self.attn_wd)
+            init_weights(self.attn_sent)
             
         init_lstm(self.rnn)
 
@@ -115,22 +116,22 @@ class Context(NN.Module):
         initial_state = (lstm_h, lstm_c)
         return initial_state
 
-    def forward(self, sent_decode, length, sentence_lengths_padded,
+    def forward(self, sent_encs, length, sentence_lengths_padded,
                 wds_h, usrs_b, initial_state=None):
         if self._attention_enabled:
-            attn = self.attention(sent_decode)
-        sent_decode = cuda(sent_decode)
+            attn = self.attention(sent_encs, length)
+        sent_encs = cuda(sent_encs)
         length = cuda(length)
         initial_state = cuda(initial_state)
 
         num_layers = self._num_layers
-        batch_size = sent_decode.size()[0]
+        batch_size = sent_encs.size()[0]
         context_size = self._context_size
         
         if initial_state is None:
             initial_state = self.zero_state(batch_size)
-        sent_decode = sent_decode.permute(1,0,2)
-        embed, (h, c) = dynamic_rnn(self.rnn, sent_decode, length, initial_state)
+        sent_encs = sent_encs.permute(1,0,2)
+        embed, (h, c) = dynamic_rnn(self.rnn, sent_encs, length, initial_state)
         embed = embed.contiguous().view(-1, context_size)
         #h = h.permute(1, 0, 2)
 
@@ -140,26 +141,26 @@ class Context(NN.Module):
             #ctx is batchsize, num_turns decode, size_context + size_sentence
             #wds_h words in batch (real), batch_size * turns in sample, size_sentence
             ctx = T.cat((embed[0], attn),2)
-            batch_size, num_turns_decode, _ = ctx.size()
+            batch_size, num_turns, _ = ctx.size()
             wds_in_sample, _, size_sentence = wds_h.size()
-            wds_h_attn = wds_h.view(wds_in_sample, batch_size, num_turns_decode, 
+            wds_h_attn = wds_h.view(wds_in_sample, batch_size, num_turns, 
                                     size_sentence).permute(1,2,0,3).unsqueeze(1)
             #wds_h_attn is now batch, (TO BE USED FOR ATTN HEAD), 
             #num_turns_historical, words_in_sample, size_sentence
-            wds_h_attn = wds_h.view(batch_size, 1, wds_in_sample * num_turns_decode, size_sentence)
+            wds_h_attn = wds_h.view(batch_size, 1, wds_in_sample * num_turns, size_sentence)
             wds_h_attn_expanded = wds_h_attn.expand(
-                    batch_size, num_turns_decode, wds_in_sample * num_turns_decode, size_sentence)
-            ctx = ctx.view(batch_size, num_turns_decode, size_context + size_sentence).unsqueeze(2)
-            ctx_expanded = ctx.expand(batch_size, num_turns_decode, wds_in_sample * num_turns_decode,
+                    batch_size, num_turns, wds_in_sample * num_turns, size_sentence)
+            ctx_unsqueezed = ctx.view(batch_size, num_turns, size_context + size_sentence).unsqueeze(2)
+            ctx_expanded = ctx_unsqueezed.expand(batch_size, num_turns, wds_in_sample * num_turns,
                              size_context + size_sentence)
-            #ctx and wds_h_attn are
-            #bs, num_turns_decode, wds in sample*num_turns_decode, size
+            #ctx_expanded and wds_h_attn are
+            #bs, num_turns, wds in sample*num_turns, size
             wds_h_attn_expanded = wds_h_attn_expanded.contiguous().view(-1, size_sentence)
             ctx_expanded = ctx_expanded.contiguous().view(-1, size_sentence + size_context)
             
             attn_wd = self.attn_wd(T.cat((ctx_expanded, wds_h_attn_expanded), 1).view(
                     -1, size_context + size_sentence*2)).view(
-                    batch_size, num_turns_decode, wds_in_sample, num_turns_decode)
+                    batch_size, num_turns, wds_in_sample, num_turns)
             #wipe out after sentence_lengths_padded in dimension 2 conditioned on batch and dim 3
             #wipe out after length in dimension 1 conditioned on batch
             #wipe out after index 1 in dimension 3 conditioned on length
@@ -179,14 +180,25 @@ class Context(NN.Module):
             #mask13 = mask_4d(wds_b[:,0,:,:,:].size(), length , sentence_lengths_padded)
             
             wds_h_attn_expanded = wds_h_attn_expanded.view(
-                    batch_size, num_turns_decode, wds_in_sample, num_turns_decode, size_sentence)
+                    batch_size, num_turns, wds_in_sample, num_turns, size_sentence)
             attn_wd_masked = attn_wd * mask
             attn_wd_masked = self.softmax(
-                    attn_wd_masked.view(batch_size * num_turns_decode * wds_in_sample, num_turns_decode)).view(
-                            batch_size, num_turns_decode, wds_in_sample, num_turns_decode,1)
-            ads_weighted_wds = attn_wd_masked * wds_h_attn_expanded 
-            ads_weighted_sentences = ads_weighted_wds.sum(4)
-            #bs, num_turns_decode, wds in sample, num_turns_decode, size_sentence
+                    attn_wd_masked.permute(0, 1, 3, 2).contiguous().view(
+                            batch_size * num_turns * num_turns, wds_in_sample)).view(
+                            batch_size, num_turns, num_turns,wds_in_sample,1).permute(0,1,3,2,4)
+            at_weighted_wds = attn_wd_masked * wds_h_attn_expanded 
+            at_weighted_sent = at_weighted_wds.sum(2)
+            _, _, size_usr = usrs_b.size()
+            usrs_b_expanded = usrs_b.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_usr)
+            usrs_messages = T.cat((usrs_b_expanded, at_weighted_sent),3)
+            ctx_for_message_attn = ctx.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context + size_sentence)
+            ctx_sent_combined = T.cat((at_weighted_sent, ctx_for_message_attn),3)
+            #shape bs, turns, turns, ctx + sent * 2
+            ctx_sent_combined = ctx_sent_combined.view(-1, size_context + size_sentence*2)
+            attn_rolled_up_sent = self.attn_sent(ctx_sent_combined).view(
+                    batch_size, num_turns, num_turns)
+            blah = 3
+            #bs, num_turns (for attention head), num_turns, size_sentence
         else:
             ctx = embed[0]
         return ctx, embed[1].contiguous()
@@ -206,12 +218,11 @@ class Attention(NN.Module):
         self.F = NN.Sequential(
             NN.Linear(size_sentence, size_sentence),
             NN.LeakyReLU(),
-            NN.Linear(size_sentence, max_turns_allowed),
-            NN.Softplus())
+            NN.Linear(size_sentence, max_turns_allowed))
         init_weights(self.F)
         self.softmax = NN.Softmax()
 
-    def forward(self, sent_encodings):
+    def forward(self, sent_encodings, turns):
         batch_size, num_turns, size_sentence = sent_encodings.size()
         sent_encodings = cuda(sent_encodings)
         max_turns_allowed = self._max_turns_allowed
@@ -220,19 +231,37 @@ class Attention(NN.Module):
                 batch_size * num_turns, size_sentence))
         attention_heads = attention_heads.view(
                 batch_size, -1, max_turns_allowed)[
-                :,:,:num_turns].contiguous().view(
+                :,:,:num_turns].contiguous()
+        #Attention heads is now:
+        #batch_size by num_turns in sent by num_turns (max num turns)
+        #will become
+        #batch_size by num_turns by sent by 1
+        #sent_encodings is:
+        #batch_size by num_turns by size_sentence
+        #sent_encodings will become:
+        #batch_size by num_turns by (attention futures) by size_sentence
+        #Need to chop off attention at
+        #batch size by num_turns by (UP TO current sentence) by 1
+        attention_heads = T.cat([
+                T.cat((inverseHackTorch(attention_heads[:,i:i+1,:i+1]),
+                       tovar(T.zeros((batch_size, 1, num_turns - i-1)))),2)
+                if i < num_turns - 1 else inverseHackTorch(attention_heads[:,i:i+1,:i+1])
+                for i in range(num_turns)], 1)
+        attention_heads = attention_heads.view(
                 batch_size * num_turns, -1)
         attention_heads = self.softmax(attention_heads)
         attention_heads = attention_heads.view(
                 batch_size, num_turns, -1).unsqueeze(3)
+        '''
         attn_shifted = T.cat([
                 T.cat((inverseHackTorch(attention_heads[:,i,:i+1,:]).unsqueeze(1),
-                attention_heads[:,i,i+1:,:].unsqueeze(1)),2)
-                if i < attention_heads.size()[1]-2 else 
+                T.zeros((batch_size, 1, size_sentence - i, 1))),2)
+                if i < attention_heads.size()[1]-1 else 
                 inverseHackTorch(attention_heads[:,i,:,:]).unsqueeze(1)
                 for i in range(attention_heads.size()[1])],1)
+        '''
         sent_encodings = sent_encodings.unsqueeze(2)
-        return (sent_encodings * attn_shifted).sum(1)
+        return (sent_encodings * attention_heads).sum(1)
 
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
@@ -678,7 +707,7 @@ while True:
                     usr_std, wd_std, sent_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
-            encodings = tovar((encodings + tovar(enc_adv)).data)
+            encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         #attn = attention(encodings)
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
