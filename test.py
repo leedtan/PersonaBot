@@ -183,7 +183,7 @@ def test(dataset,
 
         # Mix the sentence encoding with last context, take one step of Context RNN
         sentence_encoding = sentence_encoding.unsqueeze(1)
-        context_encoding, context_state = context_net(sentence_encoding, one, context_state)
+        context_encoding, context_state = context_net(sentence_encoding, one, ???, wds_h, ???, context_state)
 
         # Decode the current context using beam search
         score, _sentence = beam_search(
@@ -200,9 +200,9 @@ def test(dataset,
         # Encode the response (_sentence)
         sentence, sentence_length = sentence_to_vars(_sentence)
         sentence_embed = word_embedder(sentence)
-        sentence_encoding = encoder(sentence_embed, respondent_embed, sentence_length)
+        sentence_encoding, wds_h = encoder(sentence_embed, respondent_embed, sentence_length)
         sentence_encoding = sentence_encoding.unsqueeze(1)
-        context_encoding, context_state = context_net(sentence_encoding, one, context_state)
+        context_encoding, context_state = context_net(sentence_encoding, one, ???, wds_h, ???, context_state)
 
         if hallucinate:
             score, _sentence = beam_search(
