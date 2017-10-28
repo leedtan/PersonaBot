@@ -31,7 +31,7 @@ from collections import Counter
 from data_loader_stage1 import *
 
 from adv import *
-from test import test
+#from test import test
 
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
@@ -90,7 +90,6 @@ class Context(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = NN.Softmax()
         if self._attention_enabled:
             self.attention = attention
             self.attn_wd = NN.Sequential(
@@ -221,8 +220,9 @@ class Context(NN.Module):
             mask_sent = tovar(mask_sent)
             attn_sent_masked = attn_rolled_up_sent * mask_sent
             # FIXME variable length softmax
-            attn_sent_softmax = self.softmax(
-                    attn_sent_masked.view(batch_size * num_turns, num_turns)).view(
+            attn_sent_softmax = weighted_softmax(
+                    attn_sent_masked.view(batch_size * num_turns, num_turns),
+                    mask_sent.view(batch_size*num_turns, num_turns)).view(
                             batch_size, num_turns, num_turns, 1)
             usrs_and_ctx_attnended = usrs_and_ctx * attn_sent_softmax
             usrs_and_ctx_rolled_up_to_ctx = usrs_and_ctx_attnended.sum(2)
@@ -244,13 +244,12 @@ class Attention(NN.Module):
         self._size_sentence = size_sentence
         self._max_turns_allowed = max_turns_allowed
         self._num_layers = num_layers
-
+        self.softmax = NN.Softmax()
         self.F = NN.Sequential(
             NN.Linear(size_sentence, size_sentence),
             NN.LeakyReLU(),
             NN.Linear(size_sentence, max_turns_allowed))
         init_weights(self.F)
-        self.softmax = NN.Softmax()
 
     def forward(self, sent_encodings, turns):
         batch_size, num_turns, size_sentence = sent_encodings.size()
@@ -274,7 +273,7 @@ class Attention(NN.Module):
         #batch size by num_turns by (UP TO current sentence) by 1
         attention_heads = T.cat([
                 T.cat((inverseHackTorch(attention_heads[:,i:i+1,:i+1]),
-                       tovar(T.zeros((batch_size, 1, num_turns - i-1)))),2)
+                       tovar(-1e8*T.ones((batch_size, 1, num_turns - i-1)))),2)
                 if i < num_turns - 1 else inverseHackTorch(attention_heads[:,i:i+1,:i+1])
                 for i in range(num_turns)], 1)
         attention_heads = attention_heads.view(
@@ -596,7 +595,7 @@ parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=6)
 parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
-parser.add_argument('--adversarial_sample', type=int, default=0)
+parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--attention_enabled', type=bool, default=True)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
@@ -734,7 +733,7 @@ while True:
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std, scale=scale, style=adv_style)
+                    usr_std, wd_std, sent_std, wds_h, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
@@ -745,7 +744,7 @@ while True:
             scale = float(np.exp(-np.random.uniform(2, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
-                      usr_std, wd_std, ctx_std, scale=scale, style=adv_style)
+                      usr_std, wd_std, ctx_std, wds_h, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
