@@ -132,15 +132,11 @@ class Context(NN.Module):
             initial_state = self.zero_state(batch_size)
         sent_encs = sent_encs.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encs, length, initial_state)
-        embed = embed.contiguous().view(-1, context_size)
-        #h = h.permute(1, 0, 2)
-
-        embed = cuda(embed)
-        embed = embed.view(batch_size, -1, context_size), h
+        embed = cuda(embed.permute(1,0,2).contiguous())
         if self._attention_enabled:
             #ctx is batchsize, num_turns decode, size_context + size_sentence
             #wds_h words in batch (real), batch_size * turns in sample, size_sentence
-            ctx = T.cat((embed[0], attn),2)
+            ctx = T.cat((embed, attn),2)
             batch_size, num_turns, _ = ctx.size()
             wds_in_sample, _, size_sentence = wds_h.size()
             wds_h_attn = wds_h.view(wds_in_sample, batch_size, num_turns, 
@@ -228,7 +224,7 @@ class Context(NN.Module):
             #bs, num_turns (for attention head), num_turns, size_sentence
         else:
             ctx = embed[0]
-        return ctx, embed[1].contiguous()
+        return ctx, h.contiguous()
 
 def inverseHackTorch(tens):
     idx = [i for i in range(tens.size(2)-1,-1, -1)]
@@ -583,7 +579,7 @@ parser.add_argument('--decoder_beam_size', type=int, default=16)
 parser.add_argument('--decoder_max_generated', type=int, default=18)
 parser.add_argument('--size_usr', type=int, default=13)
 parser.add_argument('--size_wd', type=int, default=11)
-parser.add_argument('--batchsize', type=int, default=2)
+parser.add_argument('--batchsize', type=int, default=12)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
