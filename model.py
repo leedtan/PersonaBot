@@ -224,9 +224,9 @@ class Context(NN.Module):
                     attn_sent_masked.view(batch_size * num_turns, num_turns),
                     mask_sent.view(batch_size*num_turns, num_turns)).view(
                             batch_size, num_turns, num_turns, 1)
-            usrs_and_ctx_attnended = usrs_and_ctx * attn_sent_softmax
-            usrs_and_ctx_rolled_up_to_ctx = usrs_and_ctx_attnended.sum(2)
-            ctx = T.cat((ctx, usrs_and_ctx_rolled_up_to_ctx),2)
+            usrs_and_sent_attnended = usrs_and_messages * attn_sent_softmax
+            usrs_and_sent_rolled_up_to_ctx = usrs_and_sent_attnended.sum(2)
+            ctx = T.cat((ctx, usrs_and_sent_rolled_up_to_ctx),2)
             
             #bs, num_turns (for attention head), num_turns, size_sentence
         else:
@@ -305,7 +305,7 @@ class Decoder(NN.Module):
         self._num_layers = num_layers
         self._attention_enabled = attention_enabled
         if self._attention_enabled:
-            in_size = size_usr + size_wd + context_size*2 + size_sentence*2 + size_usr
+            in_size = size_usr + size_wd + context_size + size_sentence*2 + size_usr
         else:
             in_size = size_usr + size_wd + context_size
         if state_size == None:
@@ -805,6 +805,8 @@ while True:
                     itr
                     )
         # Beam search test
+        #FIXME PLEASE. BREAKS ON ATTENTION
+        '''
         if itr % 100 == 0:
             words = tonumpy(words_padded.data[0, ::2])
             sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
@@ -816,7 +818,8 @@ while True:
             _, _, dialogue_strings = dataset.translate_item(None, None, dialogue)
             for i, (d, ds, s) in enumerate(zip(dialogue, dialogue_strings, scores)):
                 print('REAL' if i % 2 == 0 else 'FAKE', ds, d, s)
-
+        '''
+        
         if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:],
                                  usrs_b_decode[:1:], sentence_lengths_padded[:1,1:])
@@ -866,16 +869,14 @@ while True:
                 adv_ctx_diffs = []
                 adv_emb_scales = []
                 adv_sent_scales = []
-                adv_ctx_scales = []
-        # FIXME: the following breaks
-        '''
-        if itr % 1000 == 5:
-            greedy_responses = decoder.viterbiGenerate(ctx.view(-1, size_context)[:5,:],
-                                                      usrs_b.view(-1, size_usr)[:5,:], 
+                adv_ctx_scales = []        
+        if itr % 10 == 0:
+            greedy_responses = decoder.greedyGenerate(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
+                                                      usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
             print('GENERATED:',dataset.translate_item(None, None, tonumpy(greedy_responses)))
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:5,0,:])))
-        '''
+        
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%08d' % (modelnamesave, itr))
