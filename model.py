@@ -585,7 +585,7 @@ parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=128)
 parser.add_argument('--decoder_size_sentence', type=int, default=256)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
-parser.add_argument('--decoder_max_generated', type=int, default=20)
+parser.add_argument('--decoder_max_generated', type=int, default=60)
 parser.add_argument('--size_usr', type=int, default=32)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=8)
@@ -878,7 +878,20 @@ while True:
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
-            print('Fake:',dataset.translate_item(None, None, tonumpy(greedy_responses)))
+            greedy_responses = tonumpy(greedy_responses)
+            eos = dataset.index_word(EOS)
+            for i in range(greedy_responses.shape[0]):
+                end_idx = np.where(greedy_responses[i,:]==eos)
+                printed = 0
+                if len(end_idx) > 0:
+                    end_idx = end_idx[0]
+                    if len(end_idx) > 0:
+                        end_idx = end_idx[0]
+                        if end_idx > 0:
+                            print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:end_idx+1]))
+                            printed = 1
+                if printed == 0:
+                    print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
         
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
