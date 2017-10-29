@@ -59,7 +59,7 @@ for dir_ in os.listdir(args.dataroot):
                 print 'Skipping %s' % path
                 skip_files += 1
                 continue
-            assert len(user_involved) == 2
+            #assert len(user_involved) == 2
             usercount.update(user_involved)
             wordcount.update(wordcount_in_file)
             turns = len(speaker_list)

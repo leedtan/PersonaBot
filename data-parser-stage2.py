@@ -5,6 +5,7 @@ import numpy as np
 import nltk
 import pickle
 import copy
+import numpy.random as RNG
 from collections import Counter, OrderedDict
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')

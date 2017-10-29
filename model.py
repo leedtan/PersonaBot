@@ -578,6 +578,7 @@ class Decoder(NN.Module):
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
+parser.add_argument('--metaroot', type=str, default='.', help='Root of meta data')
 parser.add_argument('--gloveroot', type=str,default='data', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -610,6 +611,10 @@ parser.add_argument('--dec_gpu_id', type=int, default=0)
 args = parser.parse_args()
 
 dataset = UbuntuDialogDataset(args.dataroot,
+                              wordcount_pkl=args.metaroot + '/wordcount.pkl',
+                              usercount_pkl=args.metaroot + '/usercount.pkl',
+                              turncount_pkl=args.metaroot + '/turncount.pkl',
+                              max_sentence_lengths_pkl=args.metaroot + '/max_sentence_lengths.pkl',
                               max_sentence_length_allowed=args.max_sentence_length_allowed,
                               max_turns_allowed=args.max_turns_allowed)
 try:
