@@ -195,8 +195,11 @@ class Context(NN.Module):
 
             ctx_for_message_attn = ctx.unsqueeze(2).expand(
                     batch_size, num_turns, num_turns, size_context + size_sentence)
-            usrs_b_expanded_for_ctx = T.cat(
-                    (usrs_b[:,1:,:], tovar(T.zeros(batch_size, 1, size_usr))),1).contiguous().unsqueeze(2).expand(
+            if num_turns == 1:
+                usrs_b_expanded_for_ctx = tovar(T.zeros(batch_size, 1, size_usr))
+            else:
+                usrs_b_expanded_for_ctx = T.cat([usrs_b[:, 1:, :], tovar(T.zeros(batch_size, 1, size_usr))], 1)
+            usrs_b_expanded_for_ctx = usrs_b_expanded_for_ctx.contiguous().unsqueeze(2).expand(
                             batch_size, num_turns, num_turns, size_usr)
             usrs_and_ctx = T.cat((usrs_b_expanded_for_ctx, ctx_for_message_attn),3)
 

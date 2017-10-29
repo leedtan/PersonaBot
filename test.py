@@ -164,6 +164,9 @@ def test(dataset,
     initiator = tovar(T.LongTensor([initiator]), volatile=True)
     respondent = tovar(T.LongTensor([respondent]), volatile=True)
 
+    sentence_length_list = []
+    usr_list = []
+
     initiator_embed = user_embedder(initiator)
     respondent_embed = user_embedder(respondent)
     if context_state is None:
@@ -176,6 +179,7 @@ def test(dataset,
         dialogue.append(_sentence)
         scores.append(score)
         sentence, sentence_length = sentence_to_vars(_sentence)
+        sentence_length_list.append(sentence_length)
 
         # Encode the current sentence from the initiator
         sentence_embed = word_embedder(sentence)
@@ -183,7 +187,12 @@ def test(dataset,
 
         # Mix the sentence encoding with last context, take one step of Context RNN
         sentence_encoding = sentence_encoding.unsqueeze(1)
-        context_encoding, context_state = context_net(sentence_encoding, one, tbf, wds_h, tbf, context_state)
+        usr_list.append(initiator_embed)
+
+        usrs_b = T.stack(usr_list, 1)
+        sentence_lengths_padded = T.stack(sentence_length_list, 1)
+        context_encoding, context_state = context_net(sentence_encoding, one,
+                sentence_lengths_padded, wds_h, usrs_b, context_state)
 
         # Decode the current context using beam search
         score, _sentence = beam_search(
@@ -199,10 +208,16 @@ def test(dataset,
 
         # Encode the response (_sentence)
         sentence, sentence_length = sentence_to_vars(_sentence)
+        sentence_length_list.append(sentence_length)
         sentence_embed = word_embedder(sentence)
         sentence_encoding, wds_h = encoder(sentence_embed, respondent_embed, sentence_length)
         sentence_encoding = sentence_encoding.unsqueeze(1)
-        context_encoding, context_state = context_net(sentence_encoding, one, tbf, wds_h, tbf, context_state)
+        usr_list.append(respondent_embed)
+
+        usrs_b = T.stack(usr_list, 1)
+        sentence_lengths_padded = T.stack(sentence_length_list, 1)
+        context_encoding, context_state = context_net(sentence_encoding, one,
+                sentence_lengths_padded, wds_h, usrs_b, context_state)
 
         if hallucinate:
             score, _sentence = beam_search(
