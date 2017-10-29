@@ -506,7 +506,8 @@ class Decoder(NN.Module):
 
         current_w_emb = word_emb(initial_word.unsqueeze(1))
         embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-        transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
+        transition_probabilities, transition_index, current_state = self.get_n_best_next_words(
+                embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
         next_wrd = transition_index.unsqueeze(0)
         prev_idx =  tovar(T.zeros(transition_index.size()).long().unsqueeze(0))
         nxt_s_idx_w_idx = T.cat((next_wrd, prev_idx), 0)
@@ -526,7 +527,9 @@ class Decoder(NN.Module):
         while s_idx < max_len_generated - 1:
             current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
             embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-            transition_probabilities, transition_index, current_state = self.get_n_best_next_words(embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
+            transition_probabilities, transition_index, current_state = self.get_n_best_next_words(
+                    embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), 
+                                   s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
 
             transition_index = transition_index.view(batch_size, -1)
 
@@ -880,6 +883,7 @@ while True:
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
             greedy_responses = tonumpy(greedy_responses)
             eos = dataset.index_word(EOS)
+            words_padded_decode = tonumpy(words_padded[0,:,:])
             for i in range(greedy_responses.shape[0]):
                 end_idx = np.where(greedy_responses[i,:]==eos)
                 printed = 0
@@ -892,6 +896,21 @@ while True:
                             printed = 1
                 if printed == 0:
                     print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
+                    
+                end_idx = np.where(words_padded_decode[i,:]==eos)
+                printed = 0
+                if len(end_idx) > 0:
+                    end_idx = end_idx[0]
+                    if len(end_idx) > 0:
+                        end_idx = end_idx[0]
+                        if end_idx > 0:
+                            print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:end_idx+1]))
+                            printed = 1
+                if printed == 0:
+                    try:
+                        print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
+                    except:
+                        print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
         
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
