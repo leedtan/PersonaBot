@@ -877,8 +877,8 @@ while True:
             greedy_responses = decoder.greedyGenerate(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
-            print('GENERATED:',dataset.translate_item(None, None, tonumpy(greedy_responses)))
-            #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:5,0,:])))
+            #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
+            print('Fake:',dataset.translate_item(None, None, tonumpy(greedy_responses)))
         
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
