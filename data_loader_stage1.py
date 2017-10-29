@@ -47,7 +47,7 @@ class UbuntuDialogDataset(Dataset):
         with open(wordcount_pkl, 'rb') as f:
             self._wordcount = pickle.load(f)
         with open(usercount_pkl, 'rb') as f:
-            self._usercount = pickle.load(f)
+            self._usercount = pickle.load(f, encoding='windows-1252')
         for curdir in os.listdir(root):
             files = os.listdir(os.path.join(root, curdir))
             pkls = [os.path.join(root, curdir, f)

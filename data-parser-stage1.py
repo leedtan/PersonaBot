@@ -36,6 +36,7 @@ for dir_ in os.listdir(args.dataroot):
             max_sentence_length = 0
             for l in f:
                 _, speaker, addressee, sentence = l.strip('\n').split('\t', 3)
+                speaker = speaker.decode('utf-8')
                 user_involved.add(speaker)
                 words = nltk.word_tokenize(sentence.decode('utf-8').lower())
                 wordcount_in_file.extend(words)
