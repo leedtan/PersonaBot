@@ -729,7 +729,7 @@ while True:
         usrs_b = user_emb(speaker_padded)
 
         if itr % 10 == 1 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(2, 6)))
+            scale = float(np.exp(-np.random.uniform(4, 6)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc, 
@@ -742,7 +742,7 @@ while True:
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
         if itr % 10 == 4 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(2, 6)))
+            scale = float(np.exp(-np.random.uniform(4, 6)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
@@ -754,7 +754,7 @@ while True:
         #attn = attention(encodings)
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
         if itr % 10 == 7 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(2, 6)))
+            scale = float(np.exp(-np.random.uniform(4, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
                       usr_std, wd_std, ctx_std, wds_h, scale=scale, style=adv_style)
