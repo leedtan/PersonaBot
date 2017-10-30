@@ -24,7 +24,7 @@ Current output showing it works well:
 ('idx pair', 1, 2, 'dist', 1.8767203)
 
 '''
-if 0:
+if 0: #Comment out before 
     from skipthoughtsmaster import skipthoughts
     import numpy as np
     model = skipthoughts.load_model()

@@ -892,6 +892,22 @@ while True:
             eos = dataset.index_word(EOS)
             words_padded_decode = tonumpy(words_padded[0,:,:])
             for i in range(greedy_responses.shape[0]):
+                    
+                end_idx = np.where(words_padded_decode[i,:]==eos)
+                printed = 0
+                if len(end_idx) > 0:
+                    end_idx = end_idx[0]
+                    if len(end_idx) > 0:
+                        end_idx = end_idx[0]
+                        if end_idx > 0:
+                            print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:end_idx+1]))
+                            printed = 1
+                if printed == 0 and words_padded_decode[i, 1].sum() > 0:
+                    try:
+                        print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
+                    except:
+                        print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
+
                 end_idx = np.where(greedy_responses[i,:]==eos)
                 printed = 0
                 if len(end_idx) > 0:
@@ -903,21 +919,8 @@ while True:
                             printed = 1
                 if printed == 0:
                     print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
-                    
-                end_idx = np.where(words_padded_decode[i,:]==eos)
-                printed = 0
-                if len(end_idx) > 0:
-                    end_idx = end_idx[0]
-                    if len(end_idx) > 0:
-                        end_idx = end_idx[0]
-                        if end_idx > 0:
-                            print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:end_idx+1]))
-                            printed = 1
-                if printed == 0:
-                    try:
-                        print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
-                    except:
-                        print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
+                if words_padded_decode[i, 1].sum() == 0:
+                    break
         
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
