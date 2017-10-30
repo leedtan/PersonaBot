@@ -93,14 +93,18 @@ class Context(NN.Module):
         if self._attention_enabled:
             self.attention = attention
             self.attn_wd = NN.Sequential(
-                NN.Linear(size_sentence * 2 + size_context, size_sentence),
+                NN.Linear(size_sentence + size_context * 2, size_context),
                 NN.LeakyReLU(),
-                NN.Linear(size_sentence, 1))
+                NN.Linear(size_context, size_context),
+                NN.LeakyReLU(),
+                NN.Linear(size_context, 1))
             self.attn_sent = NN.Sequential(
-                NN.Linear(size_sentence + size_sentence + context_size + size_usr * 2, 
-                          size_sentence),
+                NN.Linear(size_sentence + size_context + context_size + size_usr * 2, 
+                          size_context),
                 NN.LeakyReLU(),
-                NN.Linear(size_sentence, 1),)
+                NN.Linear(size_context, size_context),
+                NN.LeakyReLU(),
+                NN.Linear(size_context, 1),)
             init_weights(self.attention)
             init_weights(self.attn_wd)
             init_weights(self.attn_sent)
@@ -115,8 +119,6 @@ class Context(NN.Module):
 
     def forward(self, sent_encs, length, sentence_lengths_padded,
                 wds_h, usrs_b, initial_state=None):
-        if self._attention_enabled:
-            attn = self.attention(sent_encs, length)
             # attn: batch_size, max_turns, sentence_encoding_size
         sent_encs = cuda(sent_encs)
         length = cuda(length)
@@ -133,6 +135,7 @@ class Context(NN.Module):
         embed = cuda(embed.permute(1,0,2).contiguous())
         # embed is now: batch_size, max_turns, context_size
         if self._attention_enabled:
+            attn = self.attention(embed, length)
             #ctx is batchsize, num_turns decode, size_context + size_sentence
             #wds_h maximum words in batch (real), batch_size * maximum turns in sample, size_sentence
             ctx = T.cat((embed, attn),2)
@@ -145,16 +148,16 @@ class Context(NN.Module):
             wds_h_attn = wds_h.view(batch_size, 1, wds_in_sample * num_turns, size_sentence)
             wds_h_attn_expanded = wds_h_attn.expand(
                     batch_size, num_turns, wds_in_sample * num_turns, size_sentence)
-            ctx_unsqueezed = ctx.view(batch_size, num_turns, size_context + size_sentence).unsqueeze(2)
+            ctx_unsqueezed = ctx.view(batch_size, num_turns, size_context*2).unsqueeze(2)
             ctx_expanded = ctx_unsqueezed.expand(batch_size, num_turns, wds_in_sample * num_turns,
-                             size_context + size_sentence)
+                             size_context*2)
             #ctx_expanded and wds_h_attn are
             #bs, num_turns, wds in sample*num_turns, size
             wds_h_attn_expanded = wds_h_attn_expanded.contiguous().view(-1, size_sentence)
-            ctx_expanded = ctx_expanded.contiguous().view(-1, size_sentence + size_context)
+            ctx_expanded = ctx_expanded.contiguous().view(-1, size_context*2)
             
             attn_wd = self.attn_wd(T.cat((ctx_expanded, wds_h_attn_expanded), 1).view(
-                    -1, size_context + size_sentence*2)).view(
+                    -1, size_context*2 + size_sentence)).view(
                     batch_size, num_turns, wds_in_sample, num_turns)
             #wipe out after sentence_lengths_padded in dimension 2 conditioned on batch and dim 3
             #wipe out after length in dimension 1 conditioned on batch
@@ -166,10 +169,10 @@ class Context(NN.Module):
                 for i_head in range(size[1]):
                     for i_wd in range(size[2]):
                         for i_sent in range(size[3]):
-                            if ((sentence_lengths_padded[i_b, i_sent] < i_wd)
+                            if ((sentence_lengths_padded[i_b, i_sent] <= i_wd)
                                     or (length[i_b] < i_head)
-                                    or (i_head < i_sent)
-                                    or (length[i_b] < i_sent)):
+                                    or (i_head <= i_sent)
+                                    or (length[i_b] <= i_sent)):
                                 mask[i_b, i_head, i_wd, i_sent] = 0
             mask = tovar(mask)
             #mask2 = mask_3d(attn_wd[:,0,:,:].size(), sentence_lengths_padded)
@@ -193,7 +196,7 @@ class Context(NN.Module):
             usrs_and_messages = T.cat((usrs_b_expanded_for_messages, at_weighted_sent),3)
 
             ctx_for_message_attn = ctx.unsqueeze(2).expand(
-                    batch_size, num_turns, num_turns, size_context + size_sentence)
+                    batch_size, num_turns, num_turns, size_context*2)
             if num_turns == 1:
                 usrs_b_expanded_for_ctx = tovar(T.zeros(batch_size, 1, size_usr))
             else:
@@ -205,7 +208,7 @@ class Context(NN.Module):
             # FIXME
             ctx_and_messages = T.cat((usrs_and_messages, usrs_and_ctx),3)
             #shape bs, turns, turns, ctx + sent * 2
-            ctx_and_messages = ctx_and_messages.view(-1, size_context + size_sentence*2+size_usr*2)
+            ctx_and_messages = ctx_and_messages.view(-1, size_context*2 + size_sentence+size_usr*2)
             attn_rolled_up_sent = self.attn_sent(ctx_and_messages).view(
                     batch_size, num_turns, num_turns)
             #wipe out after length in dimension 1 conditioned on batch
@@ -217,8 +220,8 @@ class Context(NN.Module):
                 for i_head in range(size[1]):
                     for i_sent in range(size[2]):
                         if ((length[i_b] < i_head)
-                                or (i_head < i_sent)
-                                or (length[i_b] < i_sent)):
+                                or (i_head <= i_sent)
+                                or (length[i_b] <= i_sent)):
                             mask_sent[i_b, i_head, i_sent] = 0
             mask_sent = tovar(mask_sent)
             attn_sent_masked = attn_rolled_up_sent * mask_sent
@@ -242,58 +245,54 @@ def inverseHackTorch(tens):
     inverted_tensor = tens[:,:,idx]
     return inverted_tensor
 class Attention(NN.Module):
-    def __init__(self, size_sentence, max_turns_allowed, num_layers = 1):
+    def __init__(self, size_context, max_turns_allowed, num_layers = 1):
         NN.Module.__init__(self)
-        self._size_sentence = size_sentence
+        self._size_context = size_context
         self._max_turns_allowed = max_turns_allowed
         self._num_layers = num_layers
         self.softmax = NN.Softmax()
         self.F = NN.Sequential(
-            NN.Linear(size_sentence, size_sentence),
+            NN.Linear(size_context * 2, size_context),
             NN.LeakyReLU(),
-            NN.Linear(size_sentence, max_turns_allowed))
+            NN.Linear(size_context, size_context),
+            NN.LeakyReLU(),
+            NN.Linear(size_context, 1))
         init_weights(self.F)
 
     def forward(self, sent_encodings, turns):
-        batch_size, num_turns, size_sentence = sent_encodings.size()
+        batch_size, num_turns, size_context = sent_encodings.size()
         sent_encodings = cuda(sent_encodings)
         max_turns_allowed = self._max_turns_allowed
         num_layers = self._num_layers
-        attention_heads = self.F(sent_encodings.view(
-                batch_size * num_turns, size_sentence))
-        attention_heads = attention_heads.view(
-                batch_size, -1, max_turns_allowed)[
-                :,:,:num_turns].contiguous()
-        #Attention heads is now:
-        #batch_size by num_turns in sent by num_turns (max num turns)
-        #will become
-        #batch_size by num_turns by sent by 1
-        #sent_encodings is:
-        #batch_size by num_turns by size_sentence
-        #sent_encodings will become:
-        #batch_size by num_turns by (attention futures) by size_sentence
-        #Need to chop off attention at
-        #batch size by num_turns by (UP TO current sentence) by 1
-        attention_heads = T.cat([
-                T.cat((inverseHackTorch(attention_heads[:,i:i+1,:i+1]),
-                       tovar(-1e8*T.ones((batch_size, 1, num_turns - i-1)))),2)
-                if i < num_turns - 1 else inverseHackTorch(attention_heads[:,i:i+1,:i+1])
-                for i in range(num_turns)], 1)
-        attention_heads = attention_heads.view(
-                batch_size * num_turns, -1)
-        attention_heads = self.softmax(attention_heads)
-        attention_heads = attention_heads.view(
-                batch_size, num_turns, -1).unsqueeze(3)
-        '''
-        attn_shifted = T.cat([
-                T.cat((inverseHackTorch(attention_heads[:,i,:i+1,:]).unsqueeze(1),
-                T.zeros((batch_size, 1, size_sentence - i, 1))),2)
-                if i < attention_heads.size()[1]-1 else 
-                inverseHackTorch(attention_heads[:,i,:,:]).unsqueeze(1)
-                for i in range(attention_heads.size()[1])],1)
-        '''
-        sent_encodings = sent_encodings.unsqueeze(2)
-        return (sent_encodings * attention_heads).sum(1)
+        attn_heads = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
+        ctx_to_attend = sent_encodings.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context)
+        head_and_ctx = T.cat((attn_heads, ctx_to_attend),3)
+        attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, size_context + size_context))
+        attn_raw = attn_raw.view(batch_size, num_turns, num_turns, 1)
+        
+        
+        
+        size = attn_raw.size()
+        mask = T.ones(*size)
+
+        for i_b in range(size[0]):
+            for i_head in range(size[1]):
+                for i_sent in range(size[2]):
+                    if ((turns[i_b] < i_head)
+                        or (i_head <= i_sent)
+                        or (turns[i_b] <= i_sent)):
+                            mask[i_b, i_head, i_sent] = 0
+        mask = tovar(mask)
+        attn_heads_masked = attn_raw * mask
+        # FIXME: variable length softmax
+        attn_heads_softmax = weighted_softmax(
+                attn_heads_masked.view(batch_size * num_turns, num_turns),
+                mask.view(batch_size*num_turns, num_turns)).view(
+                        batch_size, num_turns, num_turns, 1)
+        at_weighted_sent = attn_heads_softmax * ctx_to_attend 
+        at_weighted_sent = at_weighted_sent.sum(2)
+        
+        return at_weighted_sent
 
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
@@ -308,7 +307,7 @@ class Decoder(NN.Module):
         self._num_layers = num_layers
         self._attention_enabled = attention_enabled
         if self._attention_enabled:
-            in_size = size_usr + size_wd + context_size + size_sentence*2 + size_usr
+            in_size = size_usr + size_wd + context_size*2 + size_sentence + size_usr
         else:
             in_size = size_usr + size_wd + context_size
         if state_size == None:
@@ -593,7 +592,7 @@ parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=60)
 parser.add_argument('--size_usr', type=int, default=32)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=8)
+parser.add_argument('--batchsize', type=int, default=4)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
@@ -601,7 +600,7 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
-parser.add_argument('--max_turns_allowed', type=int, default=5)
+parser.add_argument('--max_turns_allowed', type=int, default=11)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--attention_enabled', type=bool, default=True)
@@ -667,7 +666,7 @@ user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
 #word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
-attention = cuda(Attention(size_sentence, args.max_turns_allowed, num_layers = 1))
+attention = cuda(Attention(size_context, args.max_turns_allowed, num_layers = 1))
 context = cuda(Context(size_sentence, size_context, attention, 
                num_layers = args.context_layers, 
                attention_enabled = args.attention_enabled))
@@ -732,7 +731,7 @@ while True:
             scale = float(np.exp(-np.random.uniform(4, 6)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
-               sentence_lengths_padded, enc, 
+               sentence_lengths_padded, enc,
                context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
