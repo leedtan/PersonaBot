@@ -944,8 +944,12 @@ while True:
                 if printed == 0 and words_padded_decode[i, 1].sum() > 0:
                     try:
                         print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
+                        printed = 1
                     except:
                         print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
+                        break
+                if printed == 0:
+                    break
 
                 end_idx = np.where(greedy_responses[i,:]==eos)
                 printed = 0
