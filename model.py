@@ -271,25 +271,26 @@ class Attention(NN.Module):
         attn_raw = attn_raw.view(batch_size, num_turns, num_turns, 1)
         
         
-        
         size = attn_raw.size()
         mask = T.ones(*size)
-
-        for i_b in range(size[0]):
-            for i_head in range(size[1]):
-                for i_sent in range(size[2]):
-                    if ((turns[i_b] < i_head)
-                        or (i_head <= i_sent)
-                        or (turns[i_b] <= i_sent)):
-                            mask[i_b, i_head, i_sent] = 0
+    
+        if isinstance(turns, T.LongTensor):
+            for i_b in range(size[0]):
+                for i_head in range(size[1]):
+                    for i_sent in range(size[2]):
+                        if ((turns[i_b] < i_head)
+                            or (i_head <= i_sent)
+                            or (turns[i_b] <= i_sent)):
+                                mask[i_b, i_head, i_sent] = 0
+                                
         mask = tovar(mask)
-        attn_heads_masked = attn_raw * mask
+        attn_raw = attn_raw * mask
         # FIXME: variable length softmax
-        attn_heads_softmax = weighted_softmax(
-                attn_heads_masked.view(batch_size * num_turns, num_turns),
+        attn_raw = weighted_softmax(
+                attn_raw.view(batch_size * num_turns, num_turns),
                 mask.view(batch_size*num_turns, num_turns)).view(
                         batch_size, num_turns, num_turns, 1)
-        at_weighted_sent = attn_heads_softmax * ctx_to_attend 
+        at_weighted_sent = attn_raw * ctx_to_attend 
         at_weighted_sent = at_weighted_sent.sum(2)
         
         return at_weighted_sent
@@ -320,8 +321,10 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = HierarchicalLogSoftmax(state_size, np.int(np.sqrt(num_words)), num_words)
+        self.softmax = HierarchicalLogSoftmax(state_size*2, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
+        if self._attention_enabled:
+            self.attention = Attention(state_size, 100,num_layers = 1)
 
     def zero_state(self, batch_size):
         lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
@@ -377,15 +380,20 @@ class Decoder(NN.Module):
                 self.rnn, embed_seq, length.contiguous().view(-1),
                 initial_state)
         maxwordsmessage = embed.size()[0]
-        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, state_size)
+        embed = embed.permute(1, 0, 2).contiguous()
+        
+        attn = self.attention(embed, length.contiguous().view(-1))
+        
+        embed = T.cat((embed, attn),2)
+        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size))
+            out = self.softmax(embed.view(-1, state_size * 2))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size), target.view(-1))
+            out = self.softmax(embed.view(-1, state_size * 2), target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
@@ -409,7 +417,12 @@ class Decoder(NN.Module):
 
         batch_size = embed_seq.size(0)
         embed, current_state = self.rnn(embed_seq.unsqueeze(0), current_state)
-        embed = embed.permute(1, 0, 2).contiguous().view(batch_size, self._state_size)
+        embed = embed.permute(1, 0, 2).contiguous()
+        attn = self.attention(embed, False)
+        
+        embed = T.cat((embed, attn),2)
+        #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
+        embed = embed.view(batch_size, self._state_size*2)
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
@@ -592,7 +605,7 @@ parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=60)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=8)
+parser.add_argument('--batchsize', type=int, default=3)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
