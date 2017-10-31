@@ -585,14 +585,14 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=2)
 parser.add_argument('--context_layers', type=int, default=2)
-parser.add_argument('--size_context', type=int, default=128)
-parser.add_argument('--size_sentence', type=int, default=128)
-parser.add_argument('--decoder_size_sentence', type=int, default=256)
+parser.add_argument('--size_context', type=int, default=64)
+parser.add_argument('--size_sentence', type=int, default=64)
+parser.add_argument('--decoder_size_sentence', type=int, default=128)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=60)
-parser.add_argument('--size_usr', type=int, default=32)
+parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=4)
+parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
@@ -728,7 +728,7 @@ while True:
         usrs_b = user_emb(speaker_padded)
 
         if itr % 10 == 1 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(4, 6)))
+            scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc,
@@ -741,7 +741,7 @@ while True:
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
         if itr % 10 == 4 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(4, 6)))
+            scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
@@ -753,7 +753,7 @@ while True:
         #attn = attention(encodings)
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
         if itr % 10 == 7 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(4, 6)))
+            scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
                       usr_std, wd_std, ctx_std, wds_h, scale=scale, style=adv_style)
