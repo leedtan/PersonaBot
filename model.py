@@ -426,6 +426,28 @@ class Decoder(NN.Module):
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
+    def get_next_word(self, embed_seq, init_state):
+        """
+
+        :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
+        :param current_state: num_layers * num_directions x batch_size x hidden_size
+        :param n: int, return top n words.
+        :return: batch_size x n
+        """
+        embed_seq = cuda(embed_seq)
+
+        num_decoded, num_turns_decode, state_size = embed_seq.size()
+        embed, current_state = self.rnn(embed_seq, init_state)
+        embed = embed.permute(1, 0, 2).contiguous()
+        attn = self.attention(embed, False)
+        
+        embed = T.cat((embed, attn),2)
+        #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
+        embed = embed.view(num_decoded, num_turns_decode, self._state_size*2)
+        embed = embed[-1,:,:].contiguous()
+        out = self.softmax(embed.squeeze())
+        val, indexes = out.topk(1, 1)
+        return indexes
 
     def mat_idx_vector_to_vector(self, mat, vec):
         """
@@ -459,7 +481,7 @@ class Decoder(NN.Module):
         batch_size = context_encodings.size(0)
         lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
         lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
-        current_state = (lstm_h, lstm_c)
+        init_state = cuda((lstm_h, lstm_c))
 
         # Initial word of response : Start token
         init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
@@ -468,11 +490,16 @@ class Decoder(NN.Module):
 
         current_w = init_word
         output = current_w.data.unsqueeze(1)
-
+        init_seq = 0
         while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
             current_w_emb = word_emb(current_w.squeeze())
-            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1)
-            _, current_w, current_state= self.get_n_best_next_words(embed_seq, current_state)
+            if init_seq == 0:
+                init_seq = 1
+                embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+            else:
+                X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
+                embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
+            current_w = self.get_next_word(embed_seq,init_state)
             output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
