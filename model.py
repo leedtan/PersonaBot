@@ -912,10 +912,12 @@ while True:
                 )
             '''
             if args.adversarial_sample == 1:
+                '''
                 add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
                                 scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
                                 names=['embeddings', 'sentence', 'context'], itr = itr, 
                                 log_dir = args.logdir, tag = 'scatterplot', style=adv_style)
+                '''
                 adv_emb_diffs = []
                 adv_sent_diffs = []
                 adv_ctx_diffs = []
