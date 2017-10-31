@@ -617,7 +617,7 @@ class Decoder(NN.Module):
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
-parser.add_argument('--metaroot', type=str, default='.', help='Root of meta data')
+parser.add_argument('--metaroot', type=str, default='ubuntu-meta', help='Root of meta data')
 parser.add_argument('--vocabsize', type=int, default=159996, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='data', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
