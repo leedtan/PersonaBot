@@ -378,7 +378,7 @@ class Decoder(NN.Module):
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
 
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
-        wd_emb_for_attn = wd_emb.view(batch_size * maxlenbatch, maxwordsmessage, -1)
+        wd_emb_for_attn = wd_emb.contiguous().view(batch_size * maxlenbatch, maxwordsmessage, -1)
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
