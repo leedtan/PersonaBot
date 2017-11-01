@@ -270,7 +270,8 @@ class Attention(NN.Module):
             ctx_to_attend = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
         else:
             _, _, size_extra = extra_information_to_attend_over.size()
-            ctx_to_attend = T.cat((sent_encodings, extra_information_to_attend_over), 2).unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context + size_extra)
+            ctx_to_attend = T.cat((sent_encodings, extra_information_to_attend_over), 2).unsqueeze(1).expand(
+                    batch_size, num_turns, num_turns, size_context + size_extra)
         head_and_ctx = T.cat((attn_heads, ctx_to_attend),3)
         attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, -1))
         attn_raw = attn_raw.view(batch_size, num_turns, num_turns, 1)
@@ -391,15 +392,15 @@ class Decoder(NN.Module):
         attn = self.attention(embed, length.contiguous().view(-1), extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
-        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2 + size_usr)
+        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2 + size_wd)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size * 2 + size_usr))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_wd))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size * 2 + size_usr), target.view(-1))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_wd), target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
@@ -445,11 +446,12 @@ class Decoder(NN.Module):
         num_decoded, num_turns_decode, state_size = embed_seq.size()
         embed, current_state = self.rnn(embed_seq, init_state)
         embed = embed.permute(1, 0, 2).contiguous()
+        wd_emb_for_attn = wd_emb_for_attn.permute(1,0,2).contiguous()
         attn = self.attention(embed, False, extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
-        embed = embed.view(num_decoded, num_turns_decode, self._state_size*2)
+        embed = embed.view(num_decoded, num_turns_decode, self._state_size*2 + size_wd)
         embed = embed[-1,:,:].contiguous()
         out = self.softmax(embed.squeeze())
         if Bleu:
@@ -684,22 +686,22 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=1)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=2)
-parser.add_argument('--size_sentence', type=int, default=2)
-parser.add_argument('--decoder_size_sentence', type=int, default=2)
-parser.add_argument('--decoder_beam_size', type=int, default=4)
-parser.add_argument('--decoder_max_generated', type=int, default=10)
-parser.add_argument('--size_usr', type=int, default=2)
-parser.add_argument('--size_wd', type=int, default=2)
-parser.add_argument('--batchsize', type=int, default=2)
+parser.add_argument('--size_context', type=int, default=128)
+parser.add_argument('--size_sentence', type=int, default=128)
+parser.add_argument('--decoder_size_sentence', type=int, default=256)
+parser.add_argument('--decoder_beam_size', type=int, default=1)
+parser.add_argument('--decoder_max_generated', type=int, default=60)
+parser.add_argument('--size_usr', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=50)
+parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-1)
+parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=10)
-parser.add_argument('--max_turns_allowed', type=int, default=4)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
+parser.add_argument('--max_turns_allowed', type=int, default=7)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--attention_enabled', type=bool, default=True)
@@ -987,7 +989,7 @@ while True:
                 adv_emb_scales = []
                 adv_sent_scales = []
                 adv_ctx_scales = []        
-        if itr % 3 == 0:
+        if itr % 100 == 0:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
