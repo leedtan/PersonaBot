@@ -246,29 +246,32 @@ def inverseHackTorch(tens):
     inverted_tensor = tens[:,:,idx]
     return inverted_tensor
 class Attention(NN.Module):
-    def __init__(self, size_context, max_turns_allowed, num_layers = 1):
+    def __init__(self, size_context, max_turns_allowed, num_layers = 1, extra_size_to_attend_over = 0):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._max_turns_allowed = max_turns_allowed
         self._num_layers = num_layers
         self.softmax = NN.Softmax()
         self.F = NN.Sequential(
-            NN.Linear(size_context * 2, size_context),
+            NN.Linear(size_context * 2 + extra_size_to_attend_over, size_context),
             NN.LeakyReLU(),
             NN.Linear(size_context, size_context),
             NN.LeakyReLU(),
             NN.Linear(size_context, 1))
         init_weights(self.F)
 
-    def forward(self, sent_encodings, turns):
+    def forward(self, sent_encodings, turns, extra_information_to_attend_over = None):
         batch_size, num_turns, size_context = sent_encodings.size()
         sent_encodings = cuda(sent_encodings)
         max_turns_allowed = self._max_turns_allowed
         num_layers = self._num_layers
-        attn_heads = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
-        ctx_to_attend = sent_encodings.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context)
+        attn_heads = sent_encodings.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context)
+        if extra_information_to_attend_over is None:
+            ctx_to_attend = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
+        else:
+            ctx_to_attend = T.cat((sent_encodings, extra_information_to_attend_over), 3).unsqueeze(1).expand(batch_size, num_turns, num_turns, -1)
         head_and_ctx = T.cat((attn_heads, ctx_to_attend),3)
-        attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, size_context + size_context))
+        attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, -1))
         attn_raw = attn_raw.view(batch_size, num_turns, num_turns, 1)
         
         
@@ -309,7 +312,7 @@ class Decoder(NN.Module):
         self._num_layers = num_layers
         self._attention_enabled = attention_enabled
         if self._attention_enabled:
-            in_size = size_usr + size_wd + context_size*2 + size_sentence + size_usr
+            in_size = size_usr + size_wd + context_size*2 + size_sentence + size_usr + size_wd
         else:
             in_size = size_usr + size_wd + context_size
         if state_size == None:
@@ -325,7 +328,8 @@ class Decoder(NN.Module):
         self.softmax = HierarchicalLogSoftmax(state_size*2, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
         if self._attention_enabled:
-            self.attention = Attention(state_size, 100,num_layers = 1)
+            unused_number = 100
+            self.attention = Attention(state_size, unused_number,num_layers = 1, extra_size_to_attend_over = size_wd)
 
     def zero_state(self, batch_size):
         lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
@@ -374,7 +378,7 @@ class Decoder(NN.Module):
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
 
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
-
+        wd_emb_for_attn = wd_emb.view(batch_size * maxlenbatch, maxwordsmessage, -1)
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
@@ -383,7 +387,7 @@ class Decoder(NN.Module):
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous()
         
-        attn = self.attention(embed, length.contiguous().view(-1))
+        attn = self.attention(embed, length.contiguous().view(-1), extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
         embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2)
