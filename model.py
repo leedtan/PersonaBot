@@ -991,7 +991,7 @@ while True:
                 adv_ctx_scales = []        
 
         if itr % 100 == 0:
-            greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
+            greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context * 2 + size_sentence + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
             # Only take the first turns[0] responses
