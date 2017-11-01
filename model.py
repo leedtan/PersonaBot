@@ -875,10 +875,10 @@ while True:
         loss = -log_prob
         opt.zero_grad()
         loss.backward(retain_graph=True)
-        grad_norm = clip_grad(params, args.gradclip)
+        grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
+        grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
-        opt.step()
         if itr % 10 == 1 and args.adversarial_sample == 1:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
@@ -903,24 +903,24 @@ while True:
         mask = mask_3d(ctx.size(), turns)
         ctx_dist = ctx * mask
         wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
-        if itr % 10 == 9:
-            wd_std = float(np.nanstd(wds_dist))
-            usr_std = float(np.nanstd(usrs_dist))
-            sent_std = float(np.nanstd(sent_dist))
-            ctx_std = float(np.nanstd(ctx_dist))
-            train_writer.add_summary(
-                    TF.Summary(
-                        value=[
-                            TF.Summary.Value(tag='loss', simple_value=loss),
-                            TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                            TF.Summary.Value(tag='wd_std', simple_value=wd_std),
-                            TF.Summary.Value(tag='usr_std', simple_value=usr_std),
-                            TF.Summary.Value(tag='sent_std', simple_value=sent_std),
-                            TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
-                            ]
-                        ),
-                    itr
-                    )
+
+        wd_std = float(np.nanstd(wds_dist))
+        usr_std = float(np.nanstd(usrs_dist))
+        sent_std = float(np.nanstd(sent_dist))
+        ctx_std = float(np.nanstd(ctx_dist))
+        train_writer.add_summary(
+                TF.Summary(
+                    value=[
+                        TF.Summary.Value(tag='loss', simple_value=loss),
+                        TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                        TF.Summary.Value(tag='wd_std', simple_value=wd_std),
+                        TF.Summary.Value(tag='usr_std', simple_value=usr_std),
+                        TF.Summary.Value(tag='sent_std', simple_value=sent_std),
+                        TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
+                        ]
+                    ),
+                itr
+                )
         # Beam search test
         #FIXME PLEASE. BREAKS ON ATTENTION
         '''
@@ -989,6 +989,7 @@ while True:
                 adv_emb_scales = []
                 adv_sent_scales = []
                 adv_ctx_scales = []        
+
         if itr % 100 == 0:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
@@ -1022,6 +1023,9 @@ while True:
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
             logprobs.backward(-cuda(T.Tensor(reward.T)))
+            pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
+            pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
+            print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
             '''
             for idx in range(reference.shape[0]):
                 greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
@@ -1064,6 +1068,12 @@ while True:
                     print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
                 if words_padded_decode[i, 1].sum() == 0:
                     break
+
+        for p in params:
+            if p.grad is not None and p in grads:
+                p.grad.data += grads[p]
+        clip_grad(params, args.gradclip)
+        opt.step()
         
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
