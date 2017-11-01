@@ -34,6 +34,11 @@ from data_loader_stage1 import *
 from adv import *
 #from test import test
 
+### For Debugging
+import warnings
+T.backends.cudnn.enabled = False
+warnings.simplefilter('error', UserWarning)
+
 class Encoder(NN.Module):
     def __init__(self,size_usr, size_wd, output_size, num_layers):
         NN.Module.__init__(self)
@@ -448,10 +453,12 @@ class Decoder(NN.Module):
         embed = embed[-1,:,:].contiguous()
         out = self.softmax(embed.squeeze())
         if Bleu:
-            indexes = out.exp().multinomial()
+            indexes = out.exp().multinomial().detach()
+            logp_selected = out.gather(1, indexes)
+            return indexes, logp_selected
         else:
-            _, indexes = out.topk(1, 1)
-        return indexes
+            indexes = out.topk(1, 1)
+            return indexes
 
     def mat_idx_vector_to_vector(self, mat, vec):
         """
@@ -537,6 +544,7 @@ class Decoder(NN.Module):
 
         current_w = init_word
         output = tovar(current_w.data.unsqueeze(1))
+        logprob = None
         init_seq = 0
         while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
             current_w_emb = word_emb(current_w.squeeze())
@@ -546,10 +554,11 @@ class Decoder(NN.Module):
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
-            current_w = self.get_next_word(embed_seq,init_state, Bleu = True)
+            current_w, current_logprob = self.get_next_word(embed_seq,init_state, Bleu = True)
             output = T.cat((output, current_w), 1)
+            logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
             
-        return output
+        return output, logprob
 
     def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset):
         """
@@ -859,7 +868,7 @@ while True:
                                  usrs_b_decode, sentence_lengths_padded[:,1:], words_flat)
         loss = -log_prob
         opt.zero_grad()
-        loss.backward()
+        loss.backward(retain_graph=True)
         grad_norm = clip_grad(params, args.gradclip)
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
@@ -975,15 +984,20 @@ while True:
                 adv_sent_scales = []
                 adv_ctx_scales = []        
         if itr % 3 == 0:
-            greedy_responses = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
+            greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
+            # Only take the first turns[0] responses
+            greedy_responses = greedy_responses[:turns[0]]
+            logprobs = logprobs[:turns[0]]
             reference = tonumpy(words_padded[0,:turns[0],:])
             hypothesis = tonumpy(greedy_responses)
+            logprobs_np = tonumpy(logprobs)
             real_sent = []
             gen_sent = []
             BLEUscores = []
             lengths_gen = []
+            smoother = bleu_score.SmoothingFunction()
             for idx in range(reference.shape[0]):
                 real_sent.append(reference[idx, :sentence_lengths_padded[0,idx]])
                 num_words = np.where(hypothesis[idx,:]==eos)[0]
@@ -993,15 +1007,15 @@ while True:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
-                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1]))
+                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1))
             
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
             reward = np.array(BLEUscores) - baseline
-            reward = np.tile(reward, (hypothesis.shape[1],1))
+            reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
-            greedy_responses.reinforce(reward)
+            logprobs.backward(-cuda(T.Tensor(reward.T)))
             '''
             for idx in range(reference.shape[0]):
                 greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
