@@ -246,29 +246,33 @@ def inverseHackTorch(tens):
     inverted_tensor = tens[:,:,idx]
     return inverted_tensor
 class Attention(NN.Module):
-    def __init__(self, size_context, max_turns_allowed, num_layers = 1):
+    def __init__(self, size_context, max_turns_allowed, num_layers = 1, extra_size_to_attend_over = 0):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._max_turns_allowed = max_turns_allowed
         self._num_layers = num_layers
         self.softmax = NN.Softmax()
         self.F = NN.Sequential(
-            NN.Linear(size_context * 2, size_context),
+            NN.Linear(size_context * 2 + extra_size_to_attend_over, size_context),
             NN.LeakyReLU(),
             NN.Linear(size_context, size_context),
             NN.LeakyReLU(),
             NN.Linear(size_context, 1))
         init_weights(self.F)
 
-    def forward(self, sent_encodings, turns):
+    def forward(self, sent_encodings, turns, extra_information_to_attend_over = None):
         batch_size, num_turns, size_context = sent_encodings.size()
         sent_encodings = cuda(sent_encodings)
         max_turns_allowed = self._max_turns_allowed
         num_layers = self._num_layers
-        attn_heads = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
-        ctx_to_attend = sent_encodings.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context)
+        attn_heads = sent_encodings.unsqueeze(2).expand(batch_size, num_turns, num_turns, size_context)
+        if extra_information_to_attend_over is None:
+            ctx_to_attend = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
+        else:
+            _, _, size_extra = extra_information_to_attend_over.size()
+            ctx_to_attend = T.cat((sent_encodings, extra_information_to_attend_over), 2).unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context + size_extra)
         head_and_ctx = T.cat((attn_heads, ctx_to_attend),3)
-        attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, size_context + size_context))
+        attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, -1))
         attn_raw = attn_raw.view(batch_size, num_turns, num_turns, 1)
         
         
@@ -322,10 +326,11 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = HierarchicalLogSoftmax(state_size*2, np.int(np.sqrt(num_words)), num_words)
+        self.softmax = HierarchicalLogSoftmax(state_size*2 + size_wd, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
         if self._attention_enabled:
-            self.attention = Attention(state_size, 100,num_layers = 1)
+            unused_number = 100
+            self.attention = Attention(state_size, unused_number,num_layers = 1, extra_size_to_attend_over = size_wd)
 
     def zero_state(self, batch_size):
         lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
@@ -374,7 +379,7 @@ class Decoder(NN.Module):
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
 
         embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
-
+        wd_emb_for_attn = wd_emb.contiguous().view(batch_size * maxlenbatch, maxwordsmessage, -1)
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
@@ -383,18 +388,18 @@ class Decoder(NN.Module):
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous()
         
-        attn = self.attention(embed, length.contiguous().view(-1))
+        attn = self.attention(embed, length.contiguous().view(-1), extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
-        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2)
+        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2 + size_usr)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size * 2))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_usr))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size * 2), target.view(-1))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_usr), target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
@@ -427,7 +432,7 @@ class Decoder(NN.Module):
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
-    def get_next_word(self, embed_seq, init_state, Bleu = False):
+    def get_next_word(self, embed_seq, wd_emb_for_attn, init_state, Bleu = False):
         """
 
         :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
@@ -440,7 +445,7 @@ class Decoder(NN.Module):
         num_decoded, num_turns_decode, state_size = embed_seq.size()
         embed, current_state = self.rnn(embed_seq, init_state)
         embed = embed.permute(1, 0, 2).contiguous()
-        attn = self.attention(embed, False)
+        attn = self.attention(embed, False, extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
@@ -502,10 +507,12 @@ class Decoder(NN.Module):
             if init_seq == 0:
                 init_seq = 1
                 embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+                wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
-            current_w = self.get_next_word(embed_seq,init_state)
+                wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
+            current_w = self.get_next_word(embed_seq,wd_emb_for_attn,init_state)
             output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
@@ -546,10 +553,12 @@ class Decoder(NN.Module):
             if init_seq == 0:
                 init_seq = 1
                 embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+                wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
-            current_w, current_logprob = self.get_next_word(embed_seq,init_state, Bleu = True)
+                wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
+            current_w, current_logprob = self.get_next_word(embed_seq,wd_emb_for_attn,init_state, Bleu = True)
             output = T.cat((output, current_w), 1)
             logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
             
@@ -855,7 +864,7 @@ while True:
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
         max_output_words = sentence_lengths_padded[:, 1:].max()
-        wds_b_decode = wds_b[:,1:,:max_output_words].contiguous()
+        wds_b_decode = wds_b[:,1:,:max_output_words]
         usrs_b_decode = usrs_b[:,1:]
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
         # Training:
@@ -927,7 +936,7 @@ while True:
         '''
         
         if itr % scatter_entropy_freq == 0:
-            prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:],
+            prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:].contiguous(),
                                  usrs_b_decode[:1:], sentence_lengths_padded[:1,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
             mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
