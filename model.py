@@ -1,6 +1,7 @@
 
 from torch.nn import Parameter
 from functools import wraps
+from nltk.translate import bleu_score
 
 import torch as T
 import torch.nn as NN
@@ -426,7 +427,7 @@ class Decoder(NN.Module):
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
-    def get_next_word(self, embed_seq, init_state):
+    def get_next_word(self, embed_seq, init_state, Bleu = False):
         """
 
         :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
@@ -446,7 +447,10 @@ class Decoder(NN.Module):
         embed = embed.view(num_decoded, num_turns_decode, self._state_size*2)
         embed = embed[-1,:,:].contiguous()
         out = self.softmax(embed.squeeze())
-        val, indexes = out.topk(1, 1)
+        if Bleu:
+            indexes = out.exp().multinomial()
+        else:
+            _, indexes = out.topk(1, 1)
         return indexes
 
     def mat_idx_vector_to_vector(self, mat, vec):
@@ -503,6 +507,48 @@ class Decoder(NN.Module):
             output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
+        return output
+
+    def greedyGenerateBleu(self, context_encodings, usr_emb, word_emb, dataset):
+        """
+        How to require_grad=False ?
+        :param context_encodings: (batch_size x context_size)
+        :param word_emb:  idx to vector word embedder.
+        :param usr_emb: (batch_size x usr_emb_size)
+        :return: response : (batch_size x max_response_length)
+        """
+        context_encodings = cuda(context_encodings)
+        usr_emb = cuda(usr_emb)
+        word_emb = cuda(word_emb)
+
+        num_layers = self._num_layers
+        state_size = self._state_size
+        max_len_generated = self._max_len_generated
+
+        batch_size = context_encodings.size(0)
+        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
+        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
+        init_state = cuda((lstm_h, lstm_c))
+
+        # Initial word of response : Start token
+        init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
+        # End of generated sentence : EOS token
+        stop_word = cuda(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
+
+        current_w = init_word
+        output = tovar(current_w.data.unsqueeze(1))
+        init_seq = 0
+        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
+            current_w_emb = word_emb(current_w.squeeze())
+            if init_seq == 0:
+                init_seq = 1
+                embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+            else:
+                X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
+                embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
+            current_w = self.get_next_word(embed_seq,init_state, Bleu = True)
+            output = T.cat((output, current_w), 1)
+            
         return output
 
     def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset):
@@ -625,22 +671,22 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=1)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=128)
-parser.add_argument('--size_sentence', type=int, default=128)
-parser.add_argument('--decoder_size_sentence', type=int, default=256)
+parser.add_argument('--size_context', type=int, default=2)
+parser.add_argument('--size_sentence', type=int, default=2)
+parser.add_argument('--decoder_size_sentence', type=int, default=2)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
-parser.add_argument('--decoder_max_generated', type=int, default=60)
-parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=16)
+parser.add_argument('--decoder_max_generated', type=int, default=10)
+parser.add_argument('--size_usr', type=int, default=2)
+parser.add_argument('--size_wd', type=int, default=2)
 parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--lr', type=float, default=1e-1)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
-parser.add_argument('--max_turns_allowed', type=int, default=11)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=10)
+parser.add_argument('--max_turns_allowed', type=int, default=4)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--attention_enabled', type=bool, default=True)
@@ -721,6 +767,9 @@ opt = T.optim.Adam(params, lr=args.lr)
 
 dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
+
+eos = dataset.index_word(EOS)
+
 itr = args.loaditerations
 epoch = 0
 usr_std = wd_std = sent_std = ctx_std = 1e-7
@@ -730,6 +779,7 @@ adv_ctx_diffs = []
 adv_emb_scales = []
 adv_sent_scales = []
 adv_ctx_scales = []
+baseline = None
 if modelnameload:
     if len(modelnameload) > 0:
         user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations))
@@ -924,13 +974,41 @@ while True:
                 adv_emb_scales = []
                 adv_sent_scales = []
                 adv_ctx_scales = []        
-        if itr % 100 == 0:
-            greedy_responses = decoder.greedyGenerate(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
+        if itr % 3 == 0:
+            greedy_responses = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
+            reference = tonumpy(words_padded[0,:turns[0],:])
+            hypothesis = tonumpy(greedy_responses)
+            real_sent = []
+            gen_sent = []
+            BLEUscores = []
+            lengths_gen = []
+            for idx in range(reference.shape[0]):
+                real_sent.append(reference[idx, :sentence_lengths_padded[0,idx]])
+                num_words = np.where(hypothesis[idx,:]==eos)[0]
+                if len(num_words) < 1:
+                    num_words = hypothesis.shape[1]
+                else:
+                    num_words = num_words[0]
+                lengths_gen.append(num_words)
+                gen_sent.append(hypothesis[idx, :num_words])
+                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1]))
+            
+            baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
+            reward = np.array(BLEUscores) - baseline
+            reward = np.tile(reward, (hypothesis.shape[1],1))
+            for idx in range(reference.shape[0]):
+                if lengths_gen[idx] < reward.shape[1]:
+                    reward[idx,lengths_gen[idx]:] = 0
+            greedy_responses.reinforce(reward)
+            '''
+            for idx in range(reference.shape[0]):
+                greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
+            '''
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
             greedy_responses = tonumpy(greedy_responses)
-            eos = dataset.index_word(EOS)
+            
             words_padded_decode = tonumpy(words_padded[0,:,:])
             for i in range(greedy_responses.shape[0]):
                     
