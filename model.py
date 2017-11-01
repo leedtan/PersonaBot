@@ -431,7 +431,7 @@ class Decoder(NN.Module):
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
-    def get_next_word(self, embed_seq, init_state, Bleu = False):
+    def get_next_word(self, embed_seq, wd_emb_for_attn, init_state, Bleu = False):
         """
 
         :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
@@ -444,7 +444,7 @@ class Decoder(NN.Module):
         num_decoded, num_turns_decode, state_size = embed_seq.size()
         embed, current_state = self.rnn(embed_seq, init_state)
         embed = embed.permute(1, 0, 2).contiguous()
-        attn = self.attention(embed, False)
+        attn = self.attention(embed, False, extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
@@ -506,10 +506,12 @@ class Decoder(NN.Module):
             if init_seq == 0:
                 init_seq = 1
                 embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+                wd_emb_for_attn = current_w_emb.unsqueeze(0).continuous()
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
-            current_w = self.get_next_word(embed_seq,init_state)
+                wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
+            current_w = self.get_next_word(embed_seq,wd_emb_for_attn,init_state)
             output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
