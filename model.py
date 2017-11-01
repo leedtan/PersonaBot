@@ -312,7 +312,7 @@ class Decoder(NN.Module):
         self._num_layers = num_layers
         self._attention_enabled = attention_enabled
         if self._attention_enabled:
-            in_size = size_usr + size_wd + context_size*2 + size_sentence + size_usr + size_wd
+            in_size = size_usr + size_wd + context_size*2 + size_sentence + size_usr
         else:
             in_size = size_usr + size_wd + context_size
         if state_size == None:
@@ -325,7 +325,7 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = HierarchicalLogSoftmax(state_size*2, np.int(np.sqrt(num_words)), num_words)
+        self.softmax = HierarchicalLogSoftmax(state_size*2 + size_wd, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
         if self._attention_enabled:
             unused_number = 100
@@ -390,15 +390,15 @@ class Decoder(NN.Module):
         attn = self.attention(embed, length.contiguous().view(-1), extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
-        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2)
+        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2 + size_usr)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size * 2))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_usr))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size * 2), target.view(-1))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_usr), target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
