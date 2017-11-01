@@ -1022,6 +1022,7 @@ while True:
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
+            opt.zero_grad()
             logprobs.backward(-cuda(T.Tensor(reward.T)))
             pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
             pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
