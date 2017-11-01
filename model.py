@@ -269,7 +269,7 @@ class Attention(NN.Module):
         if extra_information_to_attend_over is None:
             ctx_to_attend = sent_encodings.unsqueeze(1).expand(batch_size, num_turns, num_turns, size_context)
         else:
-            ctx_to_attend = T.cat((sent_encodings, extra_information_to_attend_over), 3).unsqueeze(1).expand(batch_size, num_turns, num_turns, -1)
+            ctx_to_attend = T.cat((sent_encodings, extra_information_to_attend_over), 2).unsqueeze(1).expand(batch_size, num_turns, num_turns, -1)
         head_and_ctx = T.cat((attn_heads, ctx_to_attend),3)
         attn_raw = self.F(head_and_ctx.view(batch_size *num_turns* num_turns, -1))
         attn_raw = attn_raw.view(batch_size, num_turns, num_turns, 1)
