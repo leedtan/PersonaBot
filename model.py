@@ -507,7 +507,7 @@ class Decoder(NN.Module):
             if init_seq == 0:
                 init_seq = 1
                 embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
-                wd_emb_for_attn = current_w_emb.unsqueeze(0).continuous()
+                wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
@@ -553,7 +553,7 @@ class Decoder(NN.Module):
             if init_seq == 0:
                 init_seq = 1
                 embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
-                wd_emb_for_attn = current_w_emb.unsqueeze(0).continuous()
+                wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
