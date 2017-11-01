@@ -553,10 +553,12 @@ class Decoder(NN.Module):
             if init_seq == 0:
                 init_seq = 1
                 embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+                wd_emb_for_attn = current_w_emb.unsqueeze(0).continuous()
             else:
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
-            current_w, current_logprob = self.get_next_word(embed_seq,init_state, Bleu = True)
+                wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
+            current_w, current_logprob = self.get_next_word(embed_seq,wd_emb_for_attn,init_state, Bleu = True)
             output = T.cat((output, current_w), 1)
             logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
             
