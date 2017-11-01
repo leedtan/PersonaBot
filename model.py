@@ -933,7 +933,7 @@ while True:
         '''
         
         if itr % scatter_entropy_freq == 0:
-            prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:],
+            prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:].contiguous(),
                                  usrs_b_decode[:1:], sentence_lengths_padded[:1,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
             mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
