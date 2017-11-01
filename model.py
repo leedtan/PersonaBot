@@ -861,7 +861,7 @@ while True:
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
         max_output_words = sentence_lengths_padded[:, 1:].max()
-        wds_b_decode = wds_b[:,1:,:max_output_words].contiguous()
+        wds_b_decode = wds_b[:,1:,:max_output_words]
         usrs_b_decode = usrs_b[:,1:]
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
         # Training:
