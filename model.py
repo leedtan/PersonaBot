@@ -244,6 +244,7 @@ def inverseHackTorch(tens):
     idx = cuda(T.LongTensor(idx))
     inverted_tensor = tens[:,:,idx]
     return inverted_tensor
+
 class Attention(NN.Module):
     def __init__(self, size_context, max_turns_allowed, num_layers = 1):
         NN.Module.__init__(self)
@@ -704,7 +705,9 @@ decoder_max_generated = args.decoder_max_generated
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
-#word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
+# If you want to preprocess other glove embeddings.
+# preprocess_glove(args.gloveroot, 100)
+word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
 attention = cuda(Attention(size_context, args.max_turns_allowed, num_layers = 1))
 context = cuda(Context(size_sentence, size_context, attention, 
