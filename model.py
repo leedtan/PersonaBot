@@ -233,6 +233,7 @@ def inverseHackTorch(tens):
     idx = cuda(T.LongTensor(idx))
     inverted_tensor = tens[:,:,idx]
     return inverted_tensor
+
 class Attention(NN.Module):
     def __init__(self, size_context, size_head, num_layers = 1, size_attn = 10):
         NN.Module.__init__(self)
@@ -268,7 +269,7 @@ class Attention(NN.Module):
         attn_head = heads.view(batch_size * num_turns_head, size_head)
         attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_ctx, size_attn)
         attn_head_reduced = self.F_head(attn_head).view(batch_size, num_turns_head, size_attn)
-        
+
         attn_head_expanded = attn_head_reduced.unsqueeze(2).expand(
             batch_size, num_turns_head, num_turns_ctx, size_attn).view(
                 batch_size * num_turns_head * num_turns_ctx, size_attn)
@@ -395,15 +396,15 @@ class Decoder(NN.Module):
         attn = self.attention(embed, length.contiguous().view(-1), extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
-        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2 + size_usr)
+        embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2 + size_wd)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size * 2 + size_usr))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_wd))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size * 2 + size_usr), target.view(-1))
+            out = self.softmax(embed.view(-1, state_size * 2 + size_wd), target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
@@ -449,11 +450,12 @@ class Decoder(NN.Module):
         num_decoded, num_turns_decode, state_size = embed_seq.size()
         embed, current_state = self.rnn(embed_seq, init_state)
         embed = embed.permute(1, 0, 2).contiguous()
+        wd_emb_for_attn = wd_emb_for_attn.permute(1,0,2).contiguous()
         attn = self.attention(embed, False, extra_information_to_attend_over = wd_emb_for_attn)
         
         embed = T.cat((embed, attn),2)
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
-        embed = embed.view(num_decoded, num_turns_decode, self._state_size*2)
+        embed = embed.view(num_decoded, num_turns_decode, self._state_size*2 + size_wd)
         embed = embed[-1,:,:].contiguous()
         out = self.softmax(embed.squeeze())
         if Bleu:
@@ -682,10 +684,10 @@ parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='ubuntu-meta', help='Root of meta data')
 parser.add_argument('--vocabsize', type=int, default=159996, help='Vocabulary size')
-parser.add_argument('--gloveroot', type=str,default='data', help='Root of the data downloaded from github')
+parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
-parser.add_argument('--encoder_layers', type=int, default=1)
+parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
 parser.add_argument('--size_context', type=int, default=2)
@@ -698,13 +700,13 @@ parser.add_argument('--size_usr', type=int, default=2)
 parser.add_argument('--size_wd', type=int, default=2)
 parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-1)
+parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=10)
-parser.add_argument('--max_turns_allowed', type=int, default=4)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
+parser.add_argument('--max_turns_allowed', type=int, default=7)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--attention_enabled', type=bool, default=True)
@@ -769,7 +771,9 @@ decoder_max_generated = args.decoder_max_generated
 
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
-#word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
+# If you want to preprocess other glove embeddings.
+# preprocess_glove(args.gloveroot, 100)
+word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
 attention = cuda(Attention(size_context, args.max_turns_allowed, num_layers = 1))
 context = cuda(Context(size_sentence, size_context, attention, 
@@ -879,10 +883,10 @@ while True:
         loss = -log_prob
         opt.zero_grad()
         loss.backward(retain_graph=True)
-        grad_norm = clip_grad(params, args.gradclip)
+        grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
+        grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
-        opt.step()
         if itr % 10 == 1 and args.adversarial_sample == 1:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
@@ -907,24 +911,24 @@ while True:
         mask = mask_3d(ctx.size(), turns)
         ctx_dist = ctx * mask
         wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
-        if itr % 10 == 9:
-            wd_std = float(np.nanstd(wds_dist))
-            usr_std = float(np.nanstd(usrs_dist))
-            sent_std = float(np.nanstd(sent_dist))
-            ctx_std = float(np.nanstd(ctx_dist))
-            train_writer.add_summary(
-                    TF.Summary(
-                        value=[
-                            TF.Summary.Value(tag='loss', simple_value=loss),
-                            TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                            TF.Summary.Value(tag='wd_std', simple_value=wd_std),
-                            TF.Summary.Value(tag='usr_std', simple_value=usr_std),
-                            TF.Summary.Value(tag='sent_std', simple_value=sent_std),
-                            TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
-                            ]
-                        ),
-                    itr
-                    )
+
+        wd_std = float(np.nanstd(wds_dist))
+        usr_std = float(np.nanstd(usrs_dist))
+        sent_std = float(np.nanstd(sent_dist))
+        ctx_std = float(np.nanstd(ctx_dist))
+        train_writer.add_summary(
+                TF.Summary(
+                    value=[
+                        TF.Summary.Value(tag='loss', simple_value=loss),
+                        TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                        TF.Summary.Value(tag='wd_std', simple_value=wd_std),
+                        TF.Summary.Value(tag='usr_std', simple_value=usr_std),
+                        TF.Summary.Value(tag='sent_std', simple_value=sent_std),
+                        TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
+                        ]
+                    ),
+                itr
+                )
         # Beam search test
         #FIXME PLEASE. BREAKS ON ATTENTION
         '''
@@ -993,8 +997,9 @@ while True:
                 adv_emb_scales = []
                 adv_sent_scales = []
                 adv_ctx_scales = []        
-        if itr % 3 == 0:
-            greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context + size_sentence * 2 + size_usr),
+
+        if itr % 100 == 0:
+            greedy_responses, logprobs = decoder.greedyGenerateBleu(ctx[:1,:,:].view(-1, size_context * 2 + size_sentence + size_usr),
                                                       usrs_b[:1,:,:].view(-1, size_usr), 
                                                       word_emb, dataset)
             # Only take the first turns[0] responses
@@ -1025,7 +1030,11 @@ while True:
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
+            opt.zero_grad()
             logprobs.backward(-cuda(T.Tensor(reward.T)))
+            pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
+            pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
+            print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
             '''
             for idx in range(reference.shape[0]):
                 greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
@@ -1068,6 +1077,12 @@ while True:
                     print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
                 if words_padded_decode[i, 1].sum() == 0:
                     break
+
+        for p in params:
+            if p.grad is not None and p in grads:
+                p.grad.data += grads[p]
+        clip_grad(params, args.gradclip)
+        opt.step()
         
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))

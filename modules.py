@@ -10,6 +10,8 @@ import numpy as np
 import matplotlib.pyplot as PL
 from PIL import Image
 import matplotlib
+import pickle
+
 matplotlib.use('Agg')
 matplotlib.rcParams.update({'font.size': 11})
 
@@ -290,7 +292,36 @@ def weighted_softmax(logits, weights):
     wl = wl / (wl.sum(1)+1e-8).unsqueeze(1)
     return wl
 
+# Preprocess glove : Download wikipedia embeddings from :
+# https://nlp.stanford.edu/projects/glove/
+# file : glove.6B.zip
 
+
+def preprocess_glove(dataroot, emb_size=50):
+    with open("wordcount.pkl", 'rb') as f:
+        wordcount = pickle.load(f)
+
+    print("Preprocess glove ...")
+    embsize_to_txt = {50: "glove.6B.50d.txt", 100: "glove.6B.100d.txt", 200: "glove.6B.200d.txt",
+                      300: "glove.6B.300d.txt"}
+
+    match = {}
+    with open(dataroot + "/" + embsize_to_txt[emb_size], 'r') as f:
+        i = 0
+
+        for line in f:
+            if i % 1000 == 0:
+                print("line : %d match : %d" % (i, len(match)))
+            i += 1
+
+            line = line.split(" ")
+            word = line[0]
+            if word in wordcount.keys():
+                vec = T.from_numpy(np.array([float(i) for i in line[1:]]))
+                match[word] = vec
+    with open(dataroot + "/glove-match-" + str(emb_size) + ".pkl", 'wb') as f:
+        pickle.dump(match, f)
+    print("File dumped ... ")
 
 def init_glove(word_emb, vcb, ivcb, dataroot):
     """
@@ -300,24 +331,22 @@ def init_glove(word_emb, vcb, ivcb, dataroot):
     :return: floatTensor(Vocab size x word_emb_size)
     """
 
-    embsize_to_txt = {50:"glove.6B.50d.txt", 100:"glove.6B.100d.txt", 200:"glove.6B.200d.txt", 300:"glove.6B.300d.txt"}
+    embsize_to_txt = {50:"glove-match-50.pkl", 100:"glove-match-100.pkl"}
     emb = word_emb.weight.data
     emb_size = word_emb.weight.size(1)
     if emb_size not in [50, 100, 200, 300]:
-        raise ValueError('Glove embedding size should be in [50,100,200,300], but is set to %d' % emb_size)
+        print('Glove embedding size should be in [50,100,200,300], but is set to %d' % emb_size)
+        return emb
 
     match = 0
 
-    print("Loading glove ... ")
+    with open(dataroot + "/" + embsize_to_txt[emb_size], 'rb') as f:
+        glove_wd_to_emb = pickle.load(f)
 
-    with open(dataroot + "/" + embsize_to_txt[emb_size], 'r') as f:
-        for line in f:
-            line = line.split(" ")
-            word = line[0]
-            if word in vcb:
-                match += 1
-                vec = T.from_numpy(np.array([float(i) for i in line[1:]]))
-                emb[ivcb[word]] = vec
+    for wd in vcb:
+        if wd in glove_wd_to_emb.keys():
+            emb[ivcb[wd]] = glove_wd_to_emb[wd]
+            match += 1
 
-    print("Match words in glove : " + match)
+    print("Match words in glove : " + str(match))
     return emb
