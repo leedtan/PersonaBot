@@ -484,29 +484,26 @@ class Decoder(NN.Module):
         embed_seq = cuda(embed_seq)
         state_size = self._state_size
 
-        num_decoded, num_wds, state_size = embed_seq.size()
-        embed_seq = self.F_in(embed_seq.view(num_decoded * num_wds, state_size)).view(
+        num_wds, num_decoded, state_size_seq = embed_seq.size()
+        embed_seq = self.F_in(embed_seq.view(num_decoded * num_wds, state_size_seq)).view(
                 num_decoded, num_wds, -1)
-        embed, current_state = self.rnn(embed_seq, init_state)
+        embed, current_state = self.rnn(embed_seq.permute(1,0,2).contiguous(), init_state)
         embed = embed.permute(1, 0, 2).contiguous()
-        wd_emb_for_attn = wd_emb_for_attn.permute(1,0,2).contiguous()
+        
+        embed_attn = T.cat((embed, wd_emb_for_attn.permute(1,0,2)),2)
         
         
-        
-        size_wd_mask = [1, num_decoded, maxwordsmessage, maxwordsmessage]
+        size_wd_mask = [1, num_decoded, num_wds, num_wds]
         wd_mask = T.ones(*size_wd_mask)
         wd_mask = tovar(wd_mask)
         
-        attn = self.SeltAttentionWd(embed_attn, embed, wd_mask)
+        attn = self.SeltAttentionWd(embed_attn.unsqueeze(0), embed.unsqueeze(0), wd_mask)[0]
         
-        embed = T.cat((embed, attn),3)   
+        embed = T.cat((embed, attn),2)   
         
-        
-        embed = T.cat((embed, attn),2)
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
-        embed = embed.view(num_decoded, num_wds, state_size*2 + size_wd)
-        embed = embed[-1,:,:].contiguous()
-        out = self.softmax(embed.squeeze())
+        embed = embed.view(num_decoded, num_wds, state_size + size_attn)[:,-1,:].contiguous()
+        out = self.softmax(embed.view(num_decoded, state_size + size_attn))
         if Bleu:
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
