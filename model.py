@@ -529,8 +529,8 @@ class Decoder(NN.Module):
         num_wds, num_decoded, state_size_seq = embed_seq.size()
         embed_seq = self.F_in(embed_seq.view(num_wds * num_decoded, state_size_seq)).view(
                 num_wds, num_decoded, -1)
-        embed, current_state = self.rnn(embed_seq.permute(1,0,2).contiguous(), init_state)
-        #embed = embed.permute(1, 0, 2).contiguous()
+        embed, current_state = self.rnn(embed_seq, init_state)
+        embed = embed.permute(1, 0, 2).contiguous()
         #number sentences parallel, num_words, size_emb
         embed_attn = T.cat((embed, wd_emb_for_attn.permute(1,0,2)),2)
         
