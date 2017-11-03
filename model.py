@@ -879,6 +879,7 @@ while True:
         grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
+        assert np.all(~np.isnan(tonumpy(loss)))
         if itr % 10 == 1 and args.adversarial_sample == 1:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
@@ -1019,6 +1020,7 @@ while True:
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
             reward = np.array(BLEUscores) - baseline
             reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
+            assert np.all(~np.isnan(reward))
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
@@ -1073,6 +1075,7 @@ while True:
         for p in params:
             if p.grad is not None and p in grads:
                 p.grad.data += grads[p]
+        assert check_grad(params)
         clip_grad(params, args.gradclip)
         opt.step()
         

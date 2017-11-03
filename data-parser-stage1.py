@@ -55,7 +55,7 @@ for dir_ in os.listdir(args.dataroot):
                 prev_speaker = speaker
                 prev_addressee = addressee
                 max_sentence_length = max(max_sentence_length, sentence_length)
-            if len(user_involved) < 2:
+            if len(user_involved) < 2 and '' not in user_involved:
                 print 'Skipping %s' % path
                 skip_files += 1
                 continue
