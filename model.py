@@ -35,6 +35,18 @@ from adv import *
 #from test import test
 
 class Encoder(NN.Module):
+    '''
+    Inputs:
+    @wd_emb: 3D (n_sentences, max_words, word_emb_size)
+    @usr_emb: 2D (n_sentences, user_emb_size)
+    @turns: 1D (n_sentences,) LongTensor
+
+    Returns:
+    @encoding: Sentence encoding,
+        2D (n_sentences, output_size)
+    @wds_h: Annotation vectors for each word
+        3D (max_words, n_sentences, output_size)
+    '''
     def __init__(self,size_usr, size_wd, output_size, num_layers):
         NN.Module.__init__(self)
         self._output_size = output_size
@@ -120,17 +132,19 @@ class Context(NN.Module):
         sent_encs = sent_encs.permute(1,0,2)
         embed, (h, c) = dynamic_rnn(self.rnn, sent_encs, turns, initial_state)
         embed = cuda(embed.permute(1,0,2).contiguous())
+
         # embed is now: batch_size, max_turns, context_size
         batch_size, num_turns, _ = embed.size()
-        size = [batch_size, num_turns, num_turns]
-        ctx_mask = T.ones(*size)
+        mask_size = [batch_size, num_turns, num_turns]
+        ctx_mask = T.ones(*mask_size)
     
-        for i_b in range(size[0]):
-            for i_head in range(size[1]):
-                for i_sent in range(size[2]):
-                    if ((turns[i_b] < i_head)
+        # TODO describe @ctx_mask
+        for i_b in range(mask_size[0]):
+            for i_head in range(mask_size[1]):
+                for i_sent in range(mask_size[2]):
+                    if ((turns[i_b] <= i_head)
                         or (i_head < i_sent)
-                        or (turns[i_b] < i_sent)):
+                        or (turns[i_b] <= i_sent)):
                             ctx_mask[i_b, i_head, i_sent] = 0
         ctx_mask = tovar(ctx_mask)
         ctx_attended = self.attn_ctx(embed, embed, ctx_mask)
@@ -144,18 +158,21 @@ class Context(NN.Module):
         size_wd_mask = [batch_size, num_turns, num_turns, wds_in_sample]
         wd_mask = T.ones(*size_wd_mask)
 
+        # TODO describe @size_wd_mask
         for i_b in range(size_wd_mask[0]):
             for i_head in range(size_wd_mask[1]):
                 for i_sent in range(size_wd_mask[2]):
                     for i_wd in range(size_wd_mask[3]):
-                        if ((sentence_lengths_padded[i_b, i_sent] < i_wd)
-                                or (turns[i_b] < i_head)
+                        if ((sentence_lengths_padded[i_b, i_sent] <= i_wd)
+                                or (turns[i_b] <= i_head)
                                 or (i_head < i_sent)
-                                or (turns[i_b] < i_sent)):
+                                or (turns[i_b] <= i_sent)):
                             wd_mask[i_b, i_head, i_sent, i_wd] = 0
         wd_mask = tovar(wd_mask)
+        # (batch_size, num_turns_attended_with, num_turns_attended_over, size_attn)
         wd_attended = self.attn_wd(wds_h_attn, ctx, wd_mask)
         
+        # Use @ctx and @ctx_mask to attend over the attended words (TODO refine description.....)
         wd_sent_attended = self.attn_sent(wd_attended, ctx, ctx_mask)
         
         ctx = T.cat((ctx, wd_sent_attended),2)
@@ -169,20 +186,27 @@ def inverseHackTorch(tens):
     return inverted_tensor
 
 class Attention(NN.Module):
+    '''
+    Attention head: the one we are attending with
+    Context: the one we are attending on
+    '''
     def __init__(self, size_context, size_head, num_layers = 1, size_attn = 10):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._size_attn = size_attn
         self._num_layers = num_layers
         self.softmax = NN.Softmax()
+        # Context projector
         self.F_ctx = NN.Sequential(
             NN.Linear(size_context, size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
+        # Attendee projector
         self.F_head = NN.Sequential(
             NN.Linear(size_head, size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
+        # Takes in context and attendee and produces a weight
         self.F_attn = NN.Sequential(
             NN.Linear(size_attn*2, size_attn),
             NN.LeakyReLU(),
@@ -193,10 +217,59 @@ class Attention(NN.Module):
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
 
+class SelfAttention(Attention):
+    '''
+    Self-attention over historical sentences
+    Input:
+    @context: (batch_size, num_turns_context, size_context)
+    @heads: (batch_size, num_turns_head, size_head)
+    @mask: (batch_size, num_turns_head, num_turns_context)
+    '''
+    def forward(self, context, heads, mask):
+        batch_size, num_turns_ctx, size_context = context.size()
+        _, num_turns_head, size_head = heads.size()
+        size_attn = self._size_attn
+        context = cuda(context)
+        heads = cuda(heads)
+
+        # Projection
+        attn_ctx = context.view(batch_size * num_turns_ctx, size_context)
+        attn_head = heads.view(batch_size * num_turns_head, size_head)
+        attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_ctx, size_attn)
+        attn_head_reduced = self.F_head(attn_head).view(batch_size, num_turns_head, size_attn)
+
+        # Match all contexts and heads and compute the weights for every possible pairs
+        # within a batch
+        attn_ctx_expanded = attn_ctx_reduced.unsqueeze(1).expand(
+            batch_size, num_turns_head, num_turns_ctx, size_attn).contiguous().view(
+                batch_size * num_turns_head * num_turns_ctx, size_attn)
+        attn_head_expanded = attn_head_reduced.unsqueeze(2).expand(
+            batch_size, num_turns_head, num_turns_ctx, size_attn).contiguous().view(
+                batch_size * num_turns_head * num_turns_ctx, size_attn)
+        attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
+            batch_size, num_turns_head, num_turns_ctx)
+        
+        # Weighted average over heads
+        attn_raw = weighted_softmax(
+                attn_raw.view(batch_size * num_turns_head, num_turns_ctx),
+                mask.view(batch_size*num_turns_head, num_turns_ctx)).view(
+                        batch_size, num_turns_head, num_turns_ctx, 1)
+        at_weighted_sent = attn_raw * attn_ctx_expanded.view(
+                        batch_size, num_turns_head, num_turns_ctx, -1)
+        at_weighted_sent = at_weighted_sent.sum(2)
+        
+        return at_weighted_sent
+
 class WdAttention(Attention):
+    '''
+    @context: (batch_size, n_turns, max_words, size_sentence_encoding)
+    @heads: (batch_size, n_turns, size_head)
+    @mask: (batch_size, n_turns, n_turns, max_words)
+    '''
     def forward(self, context, heads, mask):
         batch_size, num_turns_ctx, num_wds, size_context = context.size()
         _, num_turns_head, size_head = heads.size()
+
         size_attn = self._size_attn
         context = cuda(context)
         heads = cuda(heads)
@@ -216,8 +289,6 @@ class WdAttention(Attention):
         attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
             batch_size, num_turns_head, num_turns_ctx * num_wds)
         
-        attn_raw = attn_raw * mask
-        # FIXME: variable length softmax
         attn_raw = weighted_softmax(
                 attn_raw.view(batch_size * num_turns_head * num_turns_ctx, num_wds),
                 mask.view(batch_size*num_turns_head *num_turns_ctx,  num_wds)).view(
@@ -227,13 +298,21 @@ class WdAttention(Attention):
         at_weighted_sent = at_weighted_sent.sum(3)
         
         return at_weighted_sent
+
 class RolledUpAttention(Attention):
+    '''
+    @context: (batch_size, num_turns_attended_with, num_turns_attended_over, size_attn)
+    @head: (batch_size, num_turns_attended_with, size_head)
+    @mask: (batch_size, num_turns_attended_with, num_turns_attended_over)
+    '''
     def forward(self, context, heads, mask):
         batch_size, num_turns_head, num_turns_ctx, size_context = context.size()
         _, num_turns_head, size_head = heads.size()
+
         size_attn = self._size_attn
         context = cuda(context)
         heads = cuda(heads)
+
         attn_ctx = context.view(batch_size * num_turns_head * num_turns_ctx, size_context)
         attn_head = heads.view(batch_size * num_turns_head, size_head)
         attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_head, num_turns_ctx, size_attn)
@@ -249,43 +328,6 @@ class RolledUpAttention(Attention):
         attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
             batch_size, num_turns_head, num_turns_ctx)
         
-        
-        attn_raw = attn_raw * mask
-        # FIXME: variable length softmax
-        attn_raw = weighted_softmax(
-                attn_raw.view(batch_size * num_turns_head, num_turns_ctx),
-                mask.view(batch_size*num_turns_head, num_turns_ctx)).view(
-                        batch_size, num_turns_head, num_turns_ctx, 1)
-        at_weighted_sent = attn_raw * attn_ctx_expanded.view(
-                        batch_size, num_turns_head, num_turns_ctx, -1)
-        at_weighted_sent = at_weighted_sent.sum(2)
-        
-        return at_weighted_sent
-class SelfAttention(Attention):
-    def forward(self, context, heads, mask):
-        batch_size, num_turns_ctx, size_context = context.size()
-        _, num_turns_head, size_head = heads.size()
-        size_attn = self._size_attn
-        context = cuda(context)
-        heads = cuda(heads)
-        attn_ctx = context.view(batch_size * num_turns_ctx, size_context)
-        attn_head = heads.view(batch_size * num_turns_head, size_head)
-        attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_ctx, size_attn)
-        attn_head_reduced = self.F_head(attn_head).view(batch_size, num_turns_head, size_attn)
-
-        attn_ctx_expanded = attn_ctx_reduced.unsqueeze(1).expand(
-            batch_size, num_turns_head, num_turns_ctx, size_attn).contiguous().view(
-                batch_size * num_turns_head * num_turns_ctx, size_attn)
-        attn_head_expanded = attn_head_reduced.unsqueeze(2).expand(
-            batch_size, num_turns_head, num_turns_ctx, size_attn).contiguous().view(
-                batch_size * num_turns_head * num_turns_ctx, size_attn)
-        
-        attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
-            batch_size, num_turns_head, num_turns_ctx)
-        
-        
-        attn_raw = attn_raw * mask
-        # FIXME: variable length softmax
         attn_raw = weighted_softmax(
                 attn_raw.view(batch_size * num_turns_head, num_turns_ctx),
                 mask.view(batch_size*num_turns_head, num_turns_ctx)).view(
@@ -297,6 +339,10 @@ class SelfAttention(Attention):
         return at_weighted_sent
     
 class SeltAttentionWd(Attention):
+    '''
+    context: (batch_size, num_turns_ctx, max_words, size_context)
+    head: (^, num_turns_head, ^, size_head)
+    '''
     def forward(self, context, heads, mask):
         batch_size, num_turns_ctx, num_wds, size_context = context.size()
         _, _, _, size_head = heads.size()
@@ -318,9 +364,6 @@ class SeltAttentionWd(Attention):
         attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
             batch_size, num_turns_ctx, num_wds, num_wds)
         
-        
-        attn_raw = attn_raw * mask
-        # FIXME: variable length softmax
         attn_raw = weighted_softmax(
                 attn_raw.view(batch_size * num_turns_ctx * num_wds, num_wds),
                 mask.view(batch_size*num_turns_ctx * num_wds, num_wds)).view(
@@ -342,6 +385,7 @@ class Decoder(NN.Module):
         self._size_wd = size_wd
         self._size_usr = size_usr
         self._num_layers = num_layers
+        # Takes in 2 attentions: wd_sent_attention (...) and self_attention_wd (...)
         in_size = size_usr + size_wd + context_size + size_attn * 2
         RNN_in_size = in_size//2
         self._RNN_in_size = RNN_in_size
@@ -353,6 +397,7 @@ class Decoder(NN.Module):
             NN.LeakyReLU(),
             NN.Linear(in_size//2, RNN_in_size)
             )
+        init_weights(self.F_in)
         self.rnn = NN.LSTM(
                 RNN_in_size,
                 state_size,
@@ -415,8 +460,8 @@ class Decoder(NN.Module):
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
         wd_emb_attn = wd_emb[:,:,:maxwordsmessage,:]
         embed_attn = T.cat((embed, wd_emb_attn),3)
-        
-        
+
+        # TODO: describe @size_wd_mask
         size_wd_mask = [batch_size, num_turns, maxwordsmessage, maxwordsmessage]
         wd_mask = T.ones(*size_wd_mask)
 
@@ -424,8 +469,8 @@ class Decoder(NN.Module):
             for i_sent in range(size_wd_mask[1]):
                 for i_wd_head in range(size_wd_mask[2]):
                     for i_wd_ctx in range(size_wd_mask[3]):
-                        if ((sentence_lengths_padded[i_b, i_sent] < i_wd_ctx)
-                                or (turns[i_b] < i_sent)
+                        if ((sentence_lengths_padded[i_b, i_sent] <= i_wd_ctx)
+                                or (turns[i_b] <= i_sent)
                                 or (i_wd_ctx < i_wd_head)):
                             wd_mask[i_b, i_sent, i_wd_head, i_wd_ctx] = 0
         wd_mask = tovar(wd_mask)
@@ -475,23 +520,19 @@ class Decoder(NN.Module):
         return val, indexes, current_state
     def get_next_word(self, embed_seq, wd_emb_for_attn, init_state, Bleu = False):
         """
-
-        :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
-        :param current_state: num_layers * num_directions x batch_size x hidden_size
-        :param n: int, return top n words.
-        :return: batch_size x n
+        :param embed_seq: max_words, num_sentences_decoding, state_size
+        :param wd_emb_for_attention: max_words, num_sentences_decoding, size_wd
         """
         embed_seq = cuda(embed_seq)
         state_size = self._state_size
 
         num_wds, num_decoded, state_size_seq = embed_seq.size()
-        embed_seq = self.F_in(embed_seq.view(num_decoded * num_wds, state_size_seq)).view(
-                num_decoded, num_wds, -1)
+        embed_seq = self.F_in(embed_seq.view(num_wds * num_decoded, state_size_seq)).view(
+                num_wds, num_decoded, -1)
         embed, current_state = self.rnn(embed_seq.permute(1,0,2).contiguous(), init_state)
-        embed = embed.permute(1, 0, 2).contiguous()
-        
+        #embed = embed.permute(1, 0, 2).contiguous()
+        #number sentences parallel, num_words, size_emb
         embed_attn = T.cat((embed, wd_emb_for_attn.permute(1,0,2)),2)
-        
         
         size_wd_mask = [1, num_decoded, num_wds, num_wds]
         wd_mask = T.ones(*size_wd_mask)
@@ -861,6 +902,7 @@ while True:
             adv_style = 1 - adv_style
             adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
         itr += 1
+
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
         words_padded = tovar(words_padded)
@@ -882,19 +924,32 @@ while True:
         #batch, turns in a sample, embedding_dim
         usrs_b = user_emb(speaker_padded)
 
+        # The idea is to fix the word embedding and user embedding once for a while,
+        # and train the rest of the network using adversarial sampling.
         if itr % 10 == 1 and args.adversarial_sample == 1:
             scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc,
                context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
+            # to fix the pre-adversarial-sampling components, we detach the inputs
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
+
+        # Not sure why these two statements are here...
         max_turns = turns.max()
         max_words = wds_b.size()[2]
+
+        # Get the encoding vector for each sentence (@encodings), as well as
+        # annotation vectors for each word in each sentence (@wds_h) so that we
+        # can attend later.
+        # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
+        # users, and a batch of sentence lengths.
         encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
+
+        # Do the same for word-embedding, user-embedding, and encoder network
         if itr % 10 == 4 and args.adversarial_sample == 1:
             scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
@@ -904,9 +959,11 @@ while True:
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
-        encodings = encodings.view(batch_size, max_turns, -1)
 
+        encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+
+        # Do the same for everything except the decoder
         if itr % 10 == 7 and args.adversarial_sample == 1:
             scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
@@ -919,17 +976,22 @@ while True:
         wds_b_decode = wds_b[:,1:,:max_output_words]
         usrs_b_decode = usrs_b[:,1:]
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
-        # Training:
         prob, log_prob, _ = decoder(ctx[:,:-1:], wds_b_decode,
                                  usrs_b_decode, sentence_lengths_padded[:,1:], words_flat)
+
+        # Training with PPL
         loss = -log_prob
         opt.zero_grad()
         loss.backward(retain_graph=True)
+        # Record gradients from PPL
         grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
         grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
+
         loss, grad_norm = tonumpy(loss, grad_norm)
         loss = loss[0]
         assert np.all(~np.isnan(tonumpy(loss)))
+
+        # Tensorboard viz start...
         if itr % 10 == 1 and args.adversarial_sample == 1:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
@@ -972,21 +1034,6 @@ while True:
                     ),
                 itr
                 )
-        # Beam search test
-        #FIXME PLEASE. BREAKS ON ATTENTION
-        '''
-        if itr % 100 == 0:
-            words = tonumpy(words_padded.data[0, ::2])
-            sentence_lengths = tonumpy(sentence_lengths_padded[0, ::2])
-            initiator = speaker_padded.data[0, 0]
-            respondent = speaker_padded.data[0, 1]
-            words_nopad = [list(words[i, :sentence_lengths[i]]) for i in range(turns[0] // 2)]
-            dialogue, scores = test(dataset, enc, context, decoder, word_emb, user_emb, words_nopad,
-                                    initiator, respondent, args.max_sentence_length_allowed)
-            _, _, dialogue_strings = dataset.translate_item(None, None, dialogue)
-            for i, (d, ds, s) in enumerate(zip(dialogue, dialogue_strings, scores)):
-                print('REAL' if i % 2 == 0 else 'FAKE', ds, d, s)
-        '''
         
         if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:].contiguous(),
@@ -1039,8 +1086,10 @@ while True:
                 adv_ctx_diffs = []
                 adv_emb_scales = []
                 adv_sent_scales = []
-                adv_ctx_scales = []        
+                adv_ctx_scales = []
+        # ...Tensorboard viz end
 
+        # Train with Policy Gradient on BLEU scores once for a while.
         if itr % 3 == 0:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn * 2),
@@ -1051,6 +1100,8 @@ while True:
             reference = tonumpy(words_padded[0,:turns[0],:])
             hypothesis = tonumpy(greedy_responses)
             logprobs_np = tonumpy(logprobs)
+
+            # Compute BLEU scores
             real_sent = []
             gen_sent = []
             BLEUscores = []
@@ -1067,6 +1118,7 @@ while True:
                 gen_sent.append(hypothesis[idx, :num_words])
                 BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1))
             
+            # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
             reward = np.array(BLEUscores) - baseline
             reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
@@ -1074,6 +1126,8 @@ while True:
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
+
+            # Set the head gradients of the log-probabilities as negative of reward
             opt.zero_grad()
             logprobs.backward(-cuda(T.Tensor(reward.T)))
             pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
@@ -1083,6 +1137,8 @@ while True:
             for idx in range(reference.shape[0]):
                 greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
             '''
+
+            # Dump...
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
             greedy_responses = tonumpy(greedy_responses)
             
@@ -1122,6 +1178,7 @@ while True:
                 if words_padded_decode[i, 1].sum() == 0:
                     break
 
+        # After all these gibberish, add back the recorded grads from PPL and take a step
         for p in params:
             if p.grad is not None and p in grads:
                 p.grad.data += grads[p]
