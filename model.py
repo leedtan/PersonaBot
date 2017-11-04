@@ -1108,17 +1108,23 @@ while True:
 
         # Training with PPL
         loss = -log_prob
-        opt.zero_grad()
         reg = reconstruct_loss_mean*1e-2
-        reg_loss = reconstruct_loss_mean + loss
-        reg_loss.backward(retain_graph=True)
+        opt.zero_grad()
+        loss.backward(retain_graph=True)
         # Record gradients from PPL
         grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
         grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
+        
+        opt.zero_grad()
+        reg.backward(retain_graph=True)
+        # Record gradients from PPL
+        reg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
+        reg_grad_norm = sum(T.norm(v) for v in reg_grads.values()) ** 0.5
 
-        loss, grad_norm, reg = tonumpy(loss, grad_norm, reg)
+        loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
         loss, reg = loss[0],reg[0]
         assert np.all(~np.isnan(tonumpy(loss)))
+        assert np.all(~np.isnan(tonumpy(reg)))
 
         # Tensorboard viz start...
         if itr % 10 == 1 and args.adversarial_sample == 1 and itr > 1000:
@@ -1156,6 +1162,7 @@ while True:
                         TF.Summary.Value(tag='loss', simple_value=loss),
                         TF.Summary.Value(tag='reg', simple_value=reg),
                         TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                        TF.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
                         TF.Summary.Value(tag='wd_std', simple_value=wd_std),
                         TF.Summary.Value(tag='usr_std', simple_value=usr_std),
                         TF.Summary.Value(tag='sent_std', simple_value=sent_std),
@@ -1321,6 +1328,8 @@ while True:
         for p in params:
             if p.grad is not None and p in grads:
                 p.grad.data += grads[p]
+            if p.grad is not None and p in reg_grads:
+                p.grad.data += reg_grads[p]
         assert check_grad(params)
         clip_grad(params, args.gradclip)
         opt.step()
