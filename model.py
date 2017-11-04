@@ -475,7 +475,14 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = HierarchicalLogSoftmax(state_size + size_attn*2 + size_wd, np.int(np.sqrt(num_words)), num_words)
+        decoder_out_size = state_size + size_attn*2 + size_wd
+        self.F_reconstruct = NN.Sequential(
+            NN.Linear(decoder_out_size, decoder_out_size//2),
+            NN.LeakyReLU(),
+            NN.Linear(decoder_out_size//2, size_wd)
+            )
+        init_weights(self.F_reconstruct)
+        self.softmax = HierarchicalLogSoftmax(decoder_out_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
         self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size, size_attn)
         self.AttentionDecoderCtx = AttentionDecoderCtx(
@@ -491,7 +498,8 @@ class Decoder(NN.Module):
         initial_state = (lstm_h, lstm_c)
         return initial_state
 
-    def forward(self, context_encodings, wd_emb, usr_emb, sentence_lengths_padded, wd_target=None, initial_state=None):
+    def forward(self, context_encodings, wd_emb, usr_emb, sentence_lengths_padded, 
+                wd_target=None, initial_state=None, wds_b_reconstruct = None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
@@ -583,16 +591,27 @@ class Decoder(NN.Module):
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size + size_attn + size_attn + size_wd), target.view(-1))
+            decoder_out = embed.view(-1, state_size + size_attn + size_attn + size_wd)
+            out = self.softmax(decoder_out, target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
             log_prob = out.sum() / mask.sum()
+            if wds_b_reconstruct is not None:
+                
+                reconstruct = self.F_reconstruct(decoder_out)
+                reconstruct_loss = ((reconstruct.view(
+                        batch_size, maxlenbatch, maxwordsmessage, size_wd)
+                            - wds_b_reconstruct.detach()) ** 2) * mask.unsqueeze(-1)
+                reconstruct_loss_mean = reconstruct_loss.sum() / mask.sum()
 
         if log_prob is None:
             return out, (h, c)#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
         else:
-            return out, log_prob, (h, c)
+            if wds_b_reconstruct is None:
+                return out, log_prob, (h, c),
+            else:
+                return out, log_prob, (h, c), reconstruct_loss_mean
 
     def get_n_best_next_words(self, embed_seq, current_state, n=1):
         """
@@ -882,22 +901,22 @@ parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
 parser.add_argument('--size_context', type=int, default=128)
-parser.add_argument('--size_sentence', type=int, default=32)
+parser.add_argument('--size_sentence', type=int, default=64)
 parser.add_argument('--size_attn', type=int, default=32)
 parser.add_argument('--decoder_size_sentence', type=int, default=128)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
-parser.add_argument('--decoder_max_generated', type=int, default=60)
+parser.add_argument('--decoder_max_generated', type=int, default=30)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=3)
+parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
-parser.add_argument('--max_turns_allowed', type=int, default=7)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
+parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -1030,8 +1049,8 @@ while True:
 
         # The idea is to fix the word embedding and user embedding once for a while,
         # and train the rest of the network using adversarial sampling.
-        if itr % 10 == 1 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(5, 6)))
+        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > 1000:
+            scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc,
@@ -1054,8 +1073,8 @@ while True:
                 sentence_lengths_padded.view(-1))
 
         # Do the same for word-embedding, user-embedding, and encoder network
-        if itr % 10 == 4 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(5, 6)))
+        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > 1000:
+            scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
@@ -1068,8 +1087,8 @@ while True:
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
 
         # Do the same for everything except the decoder
-        if itr % 10 == 7 and args.adversarial_sample == 1:
-            scale = float(np.exp(-np.random.uniform(5, 6)))
+        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > 1000:
+            scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
                       usr_std, wd_std, ctx_std, wds_h, scale=scale, style=adv_style)
@@ -1078,35 +1097,41 @@ while True:
             ctx = tovar((ctx + tovar(ctx_adv)).data)
         max_output_words = sentence_lengths_padded[:, 1:].max()
         wds_b_decode = wds_b[:,1:,:max_output_words]
+        wds_b_reconstruct = T.cat((
+                wds_b_decode[:,:,1:,:], cuda(T.zeros(wds_b_decode.size()[0], 
+                wds_b_decode.size()[1], 1, wds_b_decode.size()[3]))),2).contiguous()
         usrs_b_decode = usrs_b[:,1:]
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
-        prob, log_prob, _ = decoder(ctx[:,:-1:], wds_b_decode,
-                                 usrs_b_decode, sentence_lengths_padded[:,1:], words_flat)
+        prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_b_decode,
+                                 usrs_b_decode, sentence_lengths_padded[:,1:], 
+                                 words_flat, wds_b_reconstruct = wds_b_reconstruct)
 
         # Training with PPL
         loss = -log_prob
         opt.zero_grad()
-        loss.backward(retain_graph=True)
+        reg = reconstruct_loss_mean*1e-2
+        reg_loss = reconstruct_loss_mean + loss
+        reg_loss.backward(retain_graph=True)
         # Record gradients from PPL
         grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
         grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
 
-        loss, grad_norm = tonumpy(loss, grad_norm)
-        loss = loss[0]
+        loss, grad_norm, reg = tonumpy(loss, grad_norm, reg)
+        loss, reg = loss[0],reg[0]
         assert np.all(~np.isnan(tonumpy(loss)))
 
         # Tensorboard viz start...
-        if itr % 10 == 1 and args.adversarial_sample == 1:
+        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > 1000:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
-        if itr % 10 == 4 and args.adversarial_sample == 1:
+        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > 1000:
             adv_sent_diffs.append(loss_adv - loss)
             adv_sent_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
-        if itr % 10 == 7 and args.adversarial_sample == 1:
+        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > 1000:
             adv_ctx_diffs.append(loss_adv - loss)
             adv_ctx_scales.append(scale)
             train_writer.add_summary(
@@ -1129,6 +1154,7 @@ while True:
                 TF.Summary(
                     value=[
                         TF.Summary.Value(tag='loss', simple_value=loss),
+                        TF.Summary.Value(tag='reg', simple_value=reg),
                         TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
                         TF.Summary.Value(tag='wd_std', simple_value=wd_std),
                         TF.Summary.Value(tag='usr_std', simple_value=usr_std),
@@ -1178,13 +1204,12 @@ while True:
                 itr
                 )
             '''
-            if args.adversarial_sample == 1:
-                '''
+            if args.adversarial_sample == 1 and itr > 1000:
                 add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
                                 scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
                                 names=['embeddings', 'sentence', 'context'], itr = itr, 
-                                log_dir = args.logdir, tag = 'scatterplot', style=adv_style)
-                '''
+                                log_dir = log_train, tag = 'scatterplot', style=adv_style)
+                
                 adv_emb_diffs = []
                 adv_sent_diffs = []
                 adv_ctx_diffs = []
@@ -1194,7 +1219,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0:
+        if itr % 10 == 0 and itr > 300:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
