@@ -1194,7 +1194,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 100 == 0:
+        if itr % 10 == 0:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
@@ -1253,43 +1253,44 @@ while True:
 
             # Dump...
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
-            greedy_responses = tonumpy(greedy_responses)
-            
-            words_padded_decode = tonumpy(words_padded[0,:,:])
-            for i in range(greedy_responses.shape[0]):
-                    
-                end_idx = np.where(words_padded_decode[i,:]==eos)
-                printed = 0
-                if len(end_idx) > 0:
-                    end_idx = end_idx[0]
+            if itr % 100 == 0:
+                greedy_responses = tonumpy(greedy_responses)
+                
+                words_padded_decode = tonumpy(words_padded[0,:,:])
+                for i in range(greedy_responses.shape[0]):
+                        
+                    end_idx = np.where(words_padded_decode[i,:]==eos)
+                    printed = 0
                     if len(end_idx) > 0:
                         end_idx = end_idx[0]
-                        if end_idx > 0:
-                            print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:end_idx+1]))
+                        if len(end_idx) > 0:
+                            end_idx = end_idx[0]
+                            if end_idx > 0:
+                                print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:end_idx+1]))
+                                printed = 1
+                    if printed == 0 and words_padded_decode[i, 1].sum() > 0:
+                        try:
+                            print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
                             printed = 1
-                if printed == 0 and words_padded_decode[i, 1].sum() > 0:
-                    try:
-                        print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
-                        printed = 1
-                    except:
-                        print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
+                        except:
+                            print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
+                            break
+                    if printed == 0:
                         break
-                if printed == 0:
-                    break
-
-                end_idx = np.where(greedy_responses[i,:]==eos)
-                printed = 0
-                if len(end_idx) > 0:
-                    end_idx = end_idx[0]
+    
+                    end_idx = np.where(greedy_responses[i,:]==eos)
+                    printed = 0
                     if len(end_idx) > 0:
                         end_idx = end_idx[0]
-                        if end_idx > 0:
-                            print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:end_idx+1]))
-                            printed = 1
-                if printed == 0:
-                    print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
-                if words_padded_decode[i, 1].sum() == 0:
-                    break
+                        if len(end_idx) > 0:
+                            end_idx = end_idx[0]
+                            if end_idx > 0:
+                                print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:end_idx+1]))
+                                printed = 1
+                    if printed == 0:
+                        print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
+                    if words_padded_decode[i, 1].sum() == 0:
+                        break
 
         # After all these gibberish, add back the recorded grads from PPL and take a step
         for p in params:
