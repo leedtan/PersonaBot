@@ -449,13 +449,20 @@ class Decoder(NN.Module):
         self._size_wd = size_wd
         self._size_usr = size_usr
         self._num_layers = num_layers
-        # Takes in 2 attentions: wd_sent_attention (...) and self_attention_wd (...)
-        in_size = size_usr + size_wd + context_size + size_attn
+#       in_size = size_usr + size_wd + context_size + size_attn
+        init_size = size_usr + context_size + size_attn
+        in_size = size_wd
         RNN_in_size = in_size//2
         self._RNN_in_size = RNN_in_size
         if state_size == None:
             state_size = in_size
         self._state_size = state_size
+        self.F_init = NN.Sequential(
+                NN.Linear(init_size, state_size * num_layers),
+                NN.LeakyReLU(),
+                NN.Linear(state_size * num_layers, state_size * num_layers),
+                NN.Tanh(),
+                )
         self.F_in = NN.Sequential(
             NN.Linear(in_size, in_size//2),
             NN.LeakyReLU(),
@@ -476,8 +483,10 @@ class Decoder(NN.Module):
         init_weights(self.SeltAttentionWd)
         init_weights(self.AttentionDecoderCtx)
 
-    def zero_state(self, batch_size):
-        lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+    def zero_state(self, batch_size, ctx):
+        lstm_h = self.F_init(ctx.view(batch_size, -1))
+        lstm_h = lstm_h.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
+        #lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
         lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
         initial_state = (lstm_h, lstm_c)
         return initial_state
@@ -503,10 +512,11 @@ class Decoder(NN.Module):
         batch_size, maxlenbatch, maxwordsmessage, _ = wd_emb.size()
         num_turns = maxlenbatch
         state_size = self._state_size
-        if initial_state is None:
-            initial_state = self.zero_state(batch_size * maxlenbatch)
             
         ctx_for_attn = T.cat((context_encodings, usr_emb),2)    
+        if initial_state is None:
+            initial_state = self.zero_state(
+                    batch_size * maxlenbatch, ctx_for_attn)
         
         #batch, turns in a sample, words in a message, embedding_dim
 
@@ -520,7 +530,8 @@ class Decoder(NN.Module):
         context_encodings = context_encodings.expand(
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
 
-        embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
+        #embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
+        embed_seq = wd_emb.contiguous()
         embed_seq = self.F_in(embed_seq.view(batch_size * maxlenbatch * maxwordsmessage,-1))
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
@@ -567,7 +578,7 @@ class Decoder(NN.Module):
         embed = T.cat((embed, attn),3)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size + size_attn * 2))
+            out = self.softmax(embed.view(-1, state_size + size_attn * 2 + size_wd))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
@@ -676,9 +687,8 @@ class Decoder(NN.Module):
         max_len_generated = self._max_len_generated
 
         batch_size = context_encodings.size(0)
-        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
-        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
-        init_state = cuda((lstm_h, lstm_c))
+        ctx_for_attn = T.cat((context_encodings, usr_emb),1).unsqueeze(0)
+        init_state = self.zero_state(batch_size, ctx_for_attn)
 
         # Initial word of response : Start token
         init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
@@ -692,13 +702,14 @@ class Decoder(NN.Module):
             current_w_emb = word_emb(current_w.squeeze())
             if init_seq == 0:
                 init_seq = 1
-                embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+                embed_seq = current_w_emb.unsqueeze(0).contiguous()
                 wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
             else:
-                X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
+                X_i = current_w_emb.contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
                 wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
-            current_w, init_state = self.get_next_word(embed_seq,wd_emb_for_attn,init_state)
+            current_w, init_state = self.get_next_word(
+                    embed_seq, wd_emb_for_attn, ctx_for_attn, init_state)
             output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
@@ -721,10 +732,8 @@ class Decoder(NN.Module):
         max_len_generated = self._max_len_generated
 
         batch_size = context_encodings.size(0)
-        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
-        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
-        init_state = cuda((lstm_h, lstm_c))
-        ctx_for_attn = T.cat((context_encodings, usr_emb),1).unsqueeze(0)    
+        ctx_for_attn = T.cat((context_encodings, usr_emb),1).unsqueeze(0)
+        init_state = self.zero_state(batch_size, ctx_for_attn)
 
         # Initial word of response : Start token
         init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
@@ -739,10 +748,10 @@ class Decoder(NN.Module):
             current_w_emb = word_emb(current_w.squeeze())
             if init_seq == 0:
                 init_seq = 1
-                embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 1).unsqueeze(0).contiguous()
+                embed_seq = current_w_emb.unsqueeze(0).contiguous()
                 wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
             else:
-                X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
+                X_i = current_w_emb.contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
                 wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0).contiguous()),0)
             current_w, init_state, current_logprob = self.get_next_word(
