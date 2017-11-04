@@ -89,7 +89,7 @@ class Encoder(NN.Module):
         return h[:, -2:].contiguous().view(batch_size, output_size), embed
 
 class Context(NN.Module):
-    def __init__(self,in_size, context_size, num_layers=1):
+    def __init__(self,in_size, context_size, size_attn, num_layers=1):
         NN.Module.__init__(self)
         self._context_size = context_size
         self._in_size = in_size
@@ -101,9 +101,9 @@ class Context(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.attn_ctx = SelfAttention(size_context, size_context)
-        self.attn_wd = WdAttention(size_sentence, size_context)
-        self.attn_sent = RolledUpAttention(size_attn, size_context)
+        self.attn_ctx = SelfAttention(size_context, size_context, size_attn)
+        self.attn_wd = WdAttention(size_sentence, size_context, size_attn)
+        self.attn_sent = RolledUpAttention(size_attn, size_context, size_attn)
         init_weights(self.attn_ctx)
         init_weights(self.attn_wd)
         init_weights(self.attn_sent)
@@ -191,7 +191,7 @@ class Attention(NN.Module):
     Attention head: the one we are attending with
     Context: the one we are attending on
     '''
-    def __init__(self, size_context, size_head, num_layers = 1, size_attn = 10):
+    def __init__(self, size_context, size_head, size_attn, num_layers = 1):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._size_attn = size_attn
@@ -226,7 +226,7 @@ class SelfAttention(Attention):
     @heads: (batch_size, num_turns_head, size_head)
     @mask: (batch_size, num_turns_head, num_turns_context)
     '''
-    def __init__(self, size_context, size_head, num_layers = 1, size_attn = 10):
+    def __init__(self, size_context, size_head, size_attn, num_layers = 1):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._size_attn = size_attn
@@ -439,7 +439,7 @@ class AttentionDecoderCtx(Attention):
         return at_weighted_sent
 
 class Decoder(NN.Module):
-    def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
+    def __init__(self,size_usr, size_wd, context_size, size_sentence, size_attn, num_words, max_len_generated ,beam_size,
                  state_size = None, num_layers=1):
         NN.Module.__init__(self)
         self._num_words = num_words
@@ -477,9 +477,9 @@ class Decoder(NN.Module):
                 )
         self.softmax = HierarchicalLogSoftmax(state_size + size_attn*2 + size_wd, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
-        self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size)
+        self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size, size_attn)
         self.AttentionDecoderCtx = AttentionDecoderCtx(
-                size_context + size_attn + size_usr, state_size + size_wd + size_attn)
+                size_context + size_attn + size_usr, state_size + size_wd + size_attn, size_attn)
         init_weights(self.SeltAttentionWd)
         init_weights(self.AttentionDecoderCtx)
 
@@ -881,23 +881,23 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=26)
-parser.add_argument('--size_sentence', type=int, default=22)
-parser.add_argument('--size_attn', type=int, default=10)
-parser.add_argument('--decoder_size_sentence', type=int, default=6)
+parser.add_argument('--size_context', type=int, default=128)
+parser.add_argument('--size_sentence', type=int, default=32)
+parser.add_argument('--size_attn', type=int, default=32)
+parser.add_argument('--decoder_size_sentence', type=int, default=128)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
-parser.add_argument('--decoder_max_generated', type=int, default=10)
-parser.add_argument('--size_usr', type=int, default=12)
-parser.add_argument('--size_wd', type=int, default=21)
-parser.add_argument('--batchsize', type=int, default=5)
+parser.add_argument('--decoder_max_generated', type=int, default=60)
+parser.add_argument('--size_usr', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=50)
+parser.add_argument('--batchsize', type=int, default=3)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=10)
-parser.add_argument('--max_turns_allowed', type=int, default=4)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
+parser.add_argument('--max_turns_allowed', type=int, default=7)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -965,9 +965,9 @@ word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
 # preprocess_glove(args.gloveroot, 100)
 word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
 enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
-context = cuda(Context(size_sentence, size_context, 
+context = cuda(Context(size_sentence, size_context, size_attn,
                num_layers = args.context_layers))
-decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, num_words+1,
+decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn, num_words+1,
                decoder_max_generated, decoder_beam_size, 
                state_size=decoder_size_sentence, 
                num_layers = args.decoder_layers))
