@@ -923,7 +923,7 @@ parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
-parser.add_argument('--lambda_pg', type=float, default=1.)
+parser.add_argument('--lambda_pg', type=float, default=.1)
 args = parser.parse_args()
 
 dataset = UbuntuDialogDataset(args.dataroot,
@@ -1069,10 +1069,11 @@ while True:
         # can attend later.
         # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
         # users, and a batch of sentence lengths.
-        encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
-                usrs_b.view(batch_size * max_turns, size_usr), 
-                sentence_lengths_padded.view(-1))
+        encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),usrs_b.view(
+                batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
 
+        assert np.all(~np.isnan(tonumpy(encodings)))
+        assert np.all(~np.isnan(tonumpy(wds_h)))
         # Do the same for word-embedding, user-embedding, and encoder network
         if itr % 10 == 4 and args.adversarial_sample == 1 and itr > 1000:
             scale = float(np.exp(-np.random.uniform(6,7)))
