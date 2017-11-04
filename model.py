@@ -904,6 +904,7 @@ parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
+parser.add_argument('--lambda_pg', type=float, default=1.)
 args = parser.parse_args()
 
 dataset = UbuntuDialogDataset(args.dataroot,
@@ -1233,7 +1234,7 @@ while True:
 
             # Set the head gradients of the log-probabilities as negative of reward
             opt.zero_grad()
-            logprobs.backward(-cuda(T.Tensor(reward.T)))
+            logprobs.backward(args.lambda_pg * -cuda(T.Tensor(reward.T)))
             pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
             pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
             print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
