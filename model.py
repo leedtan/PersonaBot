@@ -102,8 +102,8 @@ class Context(NN.Module):
                 bidirectional=False,
                 )
         self.attn_ctx = SelfAttention(size_context, size_context)
-        self.attn_wd = WdAttention(size_sentence, size_context + size_attn)
-        self.attn_sent = RolledUpAttention(size_attn, size_context + size_attn)
+        self.attn_wd = WdAttention(size_sentence, size_context)
+        self.attn_sent = RolledUpAttention(size_attn, size_context)
         init_weights(self.attn_ctx)
         init_weights(self.attn_wd)
         init_weights(self.attn_sent)
@@ -149,7 +149,8 @@ class Context(NN.Module):
         ctx_mask = tovar(ctx_mask)
         ctx_attended = self.attn_ctx(embed, embed, ctx_mask)
         
-        ctx = T.cat((embed, ctx_attended),2)
+        ctx = embed + ctx_attended
+        #ctx = T.cat((embed, ctx_attended),2)
         
         wds_in_sample, _, size_sentence = wds_h.size()
         wds_h_attn = wds_h.view(wds_in_sample, batch_size, num_turns, 
@@ -225,6 +226,33 @@ class SelfAttention(Attention):
     @heads: (batch_size, num_turns_head, size_head)
     @mask: (batch_size, num_turns_head, num_turns_context)
     '''
+    def __init__(self, size_context, size_head, num_layers = 1, size_attn = 10):
+        NN.Module.__init__(self)
+        self._size_context = size_context
+        self._size_attn = size_attn
+        self._num_layers = num_layers
+        self.softmax = NN.Softmax()
+        # Context projector
+        self.F_ctx = NN.Sequential(
+            NN.Linear(size_context, size_attn*2),
+            NN.LeakyReLU(),
+            NN.Linear(size_attn*2, size_context))
+        # Attendee projector
+        self.F_head = NN.Sequential(
+            NN.Linear(size_head, size_attn*2),
+            NN.LeakyReLU(),
+            NN.Linear(size_attn*2, size_attn))
+        # Takes in context and attendee and produces a weight
+        self.F_attn = NN.Sequential(
+            NN.Linear(size_attn + size_context, size_attn),
+            NN.LeakyReLU(),
+            NN.Linear(size_attn, size_attn),
+            NN.LeakyReLU(),
+            NN.Linear(size_attn, 1))
+        init_weights(self.F_head)
+        init_weights(self.F_ctx)
+        init_weights(self.F_attn)
+    
     def forward(self, context, heads, mask):
         batch_size, num_turns_ctx, size_context = context.size()
         _, num_turns_head, size_head = heads.size()
@@ -235,14 +263,14 @@ class SelfAttention(Attention):
         # Projection
         attn_ctx = context.view(batch_size * num_turns_ctx, size_context)
         attn_head = heads.view(batch_size * num_turns_head, size_head)
-        attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_ctx, size_attn)
+        attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_ctx, size_context)
         attn_head_reduced = self.F_head(attn_head).view(batch_size, num_turns_head, size_attn)
 
         # Match all contexts and heads and compute the weights for every possible pairs
         # within a batch
         attn_ctx_expanded = attn_ctx_reduced.unsqueeze(1).expand(
-            batch_size, num_turns_head, num_turns_ctx, size_attn).contiguous().view(
-                batch_size * num_turns_head * num_turns_ctx, size_attn)
+            batch_size, num_turns_head, num_turns_ctx, size_context).contiguous().view(
+                batch_size * num_turns_head * num_turns_ctx, size_context)
         attn_head_expanded = attn_head_reduced.unsqueeze(2).expand(
             batch_size, num_turns_head, num_turns_ctx, size_attn).contiguous().view(
                 batch_size * num_turns_head * num_turns_ctx, size_attn)
@@ -373,6 +401,42 @@ class SeltAttentionWd(Attention):
         at_weighted_sent = at_weighted_sent.sum(3)
         
         return at_weighted_sent
+class AttentionDecoderCtx(Attention):
+    '''
+    context: (batch_size, num_turns_ctx, size_context)
+    head: (^, num_turns_head, num_wds, size_head)
+    '''
+    def forward(self, context, heads, mask):
+        batch_size, num_turns_ctx, size_context = context.size()
+        _, _, num_wds, size_head = heads.size()
+        size_attn = self._size_attn
+        context = cuda(context)
+        heads = cuda(heads)
+        attn_ctx = context.view(batch_size * num_turns_ctx, size_context)
+        attn_head = heads.view(batch_size * num_turns_ctx * num_wds, size_head)
+        attn_ctx_reduced = self.F_ctx(attn_ctx).view(batch_size, num_turns_ctx, size_attn)
+        attn_head_reduced = self.F_head(attn_head).view(batch_size, num_turns_ctx,  num_wds, size_attn)
+
+        attn_ctx_expanded = attn_ctx_reduced.unsqueeze(1).expand(
+            batch_size, num_turns_ctx * num_wds, num_turns_ctx, size_attn).contiguous().view(
+                batch_size, num_turns_ctx, num_wds, num_turns_ctx, size_attn).permute(0,1,3,2,4).contiguous().view(
+                        batch_size * num_turns_ctx * num_turns_ctx * num_wds, size_attn)
+        attn_head_expanded = attn_head_reduced.unsqueeze(2).expand(
+            batch_size, num_turns_ctx, num_turns_ctx, num_wds, size_attn).contiguous().view(
+                batch_size * num_turns_ctx * num_turns_ctx * num_wds, size_attn)
+        
+        attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
+            batch_size, num_turns_ctx, num_turns_ctx, num_wds)
+        
+        attn_raw = weighted_softmax(
+                attn_raw.view(batch_size * num_turns_ctx * num_turns_ctx, num_wds),
+                mask.view(batch_size*num_turns_ctx * num_turns_ctx, num_wds)).view(
+                        batch_size, num_turns_ctx, num_turns_ctx, num_wds, 1)
+        at_weighted_sent = attn_raw * attn_ctx_expanded.view(
+                        batch_size, num_turns_ctx, num_turns_ctx, num_wds, -1)
+        at_weighted_sent = at_weighted_sent.sum(2)
+        
+        return at_weighted_sent
 
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
@@ -386,7 +450,7 @@ class Decoder(NN.Module):
         self._size_usr = size_usr
         self._num_layers = num_layers
         # Takes in 2 attentions: wd_sent_attention (...) and self_attention_wd (...)
-        in_size = size_usr + size_wd + context_size + size_attn * 2
+        in_size = size_usr + size_wd + context_size + size_attn
         RNN_in_size = in_size//2
         self._RNN_in_size = RNN_in_size
         if state_size == None:
@@ -404,9 +468,13 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.softmax = HierarchicalLogSoftmax(state_size + size_attn, np.int(np.sqrt(num_words)), num_words)
+        self.softmax = HierarchicalLogSoftmax(state_size + size_attn*2 + size_wd, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
         self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size)
+        self.AttentionDecoderCtx = AttentionDecoderCtx(
+                size_context + size_attn + size_usr, state_size + size_wd + size_attn)
+        init_weights(self.SeltAttentionWd)
+        init_weights(self.AttentionDecoderCtx)
 
     def zero_state(self, batch_size):
         lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
@@ -437,6 +505,9 @@ class Decoder(NN.Module):
         state_size = self._state_size
         if initial_state is None:
             initial_state = self.zero_state(batch_size * maxlenbatch)
+            
+        ctx_for_attn = T.cat((context_encodings, usr_emb),2)    
+        
         #batch, turns in a sample, words in a message, embedding_dim
 
         usr_emb = usr_emb.unsqueeze(2)
@@ -475,17 +546,33 @@ class Decoder(NN.Module):
                             wd_mask[i_b, i_sent, i_wd_head, i_wd_ctx] = 0
         wd_mask = tovar(wd_mask)
         
+        
         attn = self.SeltAttentionWd(embed_attn, embed, wd_mask)
         
+        
+        size_ctx_mask = [batch_size, num_turns, num_turns, maxwordsmessage]
+        ctx_mask = T.ones(*size_ctx_mask)
+
+        for i_b in range(size_ctx_mask[0]):
+            for i_ctx in range(size_ctx_mask[1]):
+                for i_head in range(size_ctx_mask[2]):
+                    if ((turns[i_b] <= i_ctx)
+                        or (turns[i_b] <= i_head)
+                        or (i_ctx < i_head)):
+                            ctx_mask[i_b, i_ctx, i_head, :] = 0
+        ctx_mask = tovar(ctx_mask)
+        
+        embed = T.cat((embed_attn, attn),3)
+        attn = self.AttentionDecoderCtx(ctx_for_attn, embed, ctx_mask)
         embed = T.cat((embed, attn),3)
 
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size + size_attn))
+            out = self.softmax(embed.view(-1, state_size + size_attn * 2))
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            out = self.softmax(embed.view(-1, state_size + size_attn), target.view(-1))
+            out = self.softmax(embed.view(-1, state_size + size_attn + size_attn + size_wd), target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
@@ -518,7 +605,7 @@ class Decoder(NN.Module):
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
-    def get_next_word(self, embed_seq, wd_emb_for_attn, init_state, Bleu = False):
+    def get_next_word(self, embed_seq, wd_emb_for_attn, ctx_for_attn, init_state, Bleu = False):
         """
         :param embed_seq: max_words, num_sentences_decoding, state_size
         :param wd_emb_for_attention: max_words, num_sentences_decoding, size_wd
@@ -540,11 +627,17 @@ class Decoder(NN.Module):
         
         attn = self.SeltAttentionWd(embed_attn.unsqueeze(0), embed.unsqueeze(0), wd_mask)[0]
         
-        embed = T.cat((embed, attn),2)   
+        embed = T.cat((embed_attn, attn),2)  
+        
+        size_ctx_mask = [1, num_decoded, num_decoded, num_wds]
+        ctx_mask = T.ones(*size_ctx_mask)
+        ctx_mask = tovar(ctx_mask)
+        attn = self.AttentionDecoderCtx(ctx_for_attn, embed.unsqueeze(0), ctx_mask)
+        embed = T.cat((embed, attn[0,:,:,:]),2)
         
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
-        embed = embed.view(num_decoded, num_wds, state_size + size_attn)[:,-1,:].contiguous()
-        out = self.softmax(embed.view(num_decoded, state_size + size_attn))
+        embed = embed.view(num_decoded, num_wds, state_size + size_attn + size_attn + size_wd)[:,-1,:].contiguous()
+        out = self.softmax(embed.view(num_decoded, state_size + size_attn + size_attn + size_wd))
         if Bleu:
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
@@ -631,6 +724,7 @@ class Decoder(NN.Module):
         lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
         lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
         init_state = cuda((lstm_h, lstm_c))
+        ctx_for_attn = T.cat((context_encodings, usr_emb),1).unsqueeze(0)    
 
         # Initial word of response : Start token
         init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
@@ -651,7 +745,8 @@ class Decoder(NN.Module):
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
                 wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0).contiguous()),0)
-            current_w, init_state, current_logprob = self.get_next_word(embed_seq,wd_emb_for_attn,init_state, Bleu = True)
+            current_w, init_state, current_logprob = self.get_next_word(
+                    embed_seq,wd_emb_for_attn,ctx_for_attn,init_state, Bleu = True)
             output = T.cat((output, current_w), 1)
             logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
             
@@ -777,23 +872,23 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=2)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=2)
-parser.add_argument('--size_sentence', type=int, default=2)
+parser.add_argument('--size_context', type=int, default=26)
+parser.add_argument('--size_sentence', type=int, default=22)
 parser.add_argument('--size_attn', type=int, default=10)
-parser.add_argument('--decoder_size_sentence', type=int, default=2)
+parser.add_argument('--decoder_size_sentence', type=int, default=6)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=10)
-parser.add_argument('--size_usr', type=int, default=2)
-parser.add_argument('--size_wd', type=int, default=2)
-parser.add_argument('--batchsize', type=int, default=2)
+parser.add_argument('--size_usr', type=int, default=12)
+parser.add_argument('--size_wd', type=int, default=21)
+parser.add_argument('--batchsize', type=int, default=5)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=60)
-parser.add_argument('--max_turns_allowed', type=int, default=7)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=10)
+parser.add_argument('--max_turns_allowed', type=int, default=4)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -1090,9 +1185,9 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 3 == 0:
+        if itr % 2 == 0:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
-                    ctx[:1,:,:].view(-1, size_context + size_attn * 2),
+                    ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
             # Only take the first turns[0] responses
             greedy_responses = greedy_responses[:turns[0]]
