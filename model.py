@@ -548,10 +548,10 @@ class Decoder(NN.Module):
         if Bleu:
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
-            return indexes, logp_selected
+            return indexes, current_state, logp_selected
         else:
             indexes = out.topk(1, 1)
-            return indexes
+            return indexes, current_state
 
     def mat_idx_vector_to_vector(self, mat, vec):
         """
@@ -605,7 +605,7 @@ class Decoder(NN.Module):
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
                 wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
-            current_w = self.get_next_word(embed_seq,wd_emb_for_attn,init_state)
+            current_w, init_state = self.get_next_word(embed_seq,wd_emb_for_attn,init_state)
             output = T.cat((output, current_w.data), 1)
 
         output = cuda(output)
@@ -651,7 +651,7 @@ class Decoder(NN.Module):
                 X_i = T.cat((usr_emb, current_w_emb, context_encodings), 1).contiguous()
                 embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
                 wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0).contiguous()),0)
-            current_w, current_logprob = self.get_next_word(embed_seq,wd_emb_for_attn,init_state, Bleu = True)
+            current_w, init_state, current_logprob = self.get_next_word(embed_seq,wd_emb_for_attn,init_state, Bleu = True)
             output = T.cat((output, current_w), 1)
             logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
             
