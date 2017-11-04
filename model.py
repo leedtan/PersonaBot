@@ -891,7 +891,7 @@ parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=3)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -1237,6 +1237,15 @@ while True:
             pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
             pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
             print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
+            train_writer.add_summary(
+                    TF.Summary(
+                        value=[
+                            TF.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscores)),
+                            TF.Summary.Value(tag='pg_grad_norm', simple_value=pg_grad_norm),
+                            ]
+                        ),
+                    itr
+                    )
             '''
             for idx in range(reference.shape[0]):
                 greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
