@@ -1276,7 +1276,8 @@ while True:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
-                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method4))
+                BLEUscores.append(bleu_score.sentence_bleu(
+                        [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1) + num_words / 1000)
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
