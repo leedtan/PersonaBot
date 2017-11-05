@@ -1124,6 +1124,7 @@ while True:
         reg_grad_norm = sum(T.norm(v) for v in reg_grads.values()) ** 0.5
 
         loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
+        print('Grad norm', grad_norm)
         loss, reg = loss[0],reg[0]
         assert np.all(~np.isnan(tonumpy(loss)))
         assert np.all(~np.isnan(tonumpy(reg)))
