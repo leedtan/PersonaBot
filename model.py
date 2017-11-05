@@ -992,13 +992,15 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                state_size=decoder_size_sentence, 
                num_layers = args.decoder_layers))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
-opt = T.optim.Adam(params, lr=args.lr)
-
+#opt = T.optim.Adam(params, lr=args.lr)
+opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-7)
 
 dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
 
 eos = dataset.index_word(EOS)
+
+loss_nan = reg_nan = grad_nan = 0
 
 itr = args.loaditerations
 epoch = 0
@@ -1124,7 +1126,20 @@ while True:
         reg_grad_norm = sum(T.norm(v) for v in reg_grads.values()) ** 0.5
 
         loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
-        print('Grad norm', grad_norm)
+        print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
+        if np.all(~np.isnan(tonumpy(loss))):
+            loss_nan = 1
+            print('LOSS NAN')
+            continue
+        if np.all(~np.isnan(tonumpy(reg))):
+            reg_nan = 1
+            print('REG NAN')
+            continue
+        if np.all(~np.isnan(tonumpy(grad_norm))):
+            grad_nan = 1
+            print('grad_norm NAN')
+            continue
+        #print('Grad norm', grad_norm)
         loss, reg = loss[0],reg[0]
         assert np.all(~np.isnan(tonumpy(loss)))
         assert np.all(~np.isnan(tonumpy(reg)))
