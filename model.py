@@ -903,14 +903,14 @@ parser.add_argument('--context_layers', type=int, default=1)
 parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=64)
 parser.add_argument('--size_attn', type=int, default=32)
-parser.add_argument('--decoder_size_sentence', type=int, default=128)
+parser.add_argument('--decoder_size_sentence', type=int, default=256)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=30)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=3e-4)
+parser.add_argument('--lr', type=float, default=2e-3)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -1128,7 +1128,8 @@ while True:
         loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
         loss, reg = loss[0],reg[0]
         #print(loss, grad_norm)
-        print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
+        if itr % 100 == 0:
+            print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
         if np.any(np.isnan(tonumpy(loss))):
             loss_nan = 1
             print('LOSS NAN')
