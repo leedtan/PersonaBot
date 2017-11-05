@@ -460,7 +460,8 @@ class Decoder(NN.Module):
         self.F_init_h = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
                 NN.LeakyReLU(),
-                NN.Linear(state_size * num_layers, state_size * num_layers)
+                NN.Linear(state_size * num_layers, state_size * num_layers),
+                NN.tanh()
                 )
         self.F_init_c = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
@@ -901,12 +902,12 @@ parser.add_argument('--vocabsize', type=int, default=159996, help='Vocabulary si
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
-parser.add_argument('--encoder_layers', type=int, default=2)
+parser.add_argument('--encoder_layers', type=int, default=3)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
 parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=64)
-parser.add_argument('--size_attn', type=int, default=32)
+parser.add_argument('--size_attn', type=int, default=64)
 parser.add_argument('--decoder_size_sentence', type=int, default=256)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=30)
@@ -922,7 +923,7 @@ parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
 parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
-parser.add_argument('--adversarial_sample', type=int, default=1)
+parser.add_argument('--adversarial_sample', type=int, default=0)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
