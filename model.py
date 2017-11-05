@@ -457,11 +457,16 @@ class Decoder(NN.Module):
         if state_size == None:
             state_size = in_size
         self._state_size = state_size
-        self.F_init = NN.Sequential(
+        self.F_init_h = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers),
-                NN.Tanh(),
+                NN.Tanh()
+                )
+        self.F_init_c = NN.Sequential(
+                NN.Linear(init_size, state_size * num_layers),
+                NN.LeakyReLU(),
+                NN.Linear(state_size * num_layers, state_size * num_layers)
                 )
         self.F_in = NN.Sequential(
             NN.Linear(in_size, in_size//2),
@@ -491,10 +496,10 @@ class Decoder(NN.Module):
         init_weights(self.AttentionDecoderCtx)
 
     def zero_state(self, batch_size, ctx):
-        lstm_h = self.F_init(ctx.view(batch_size, -1))
+        lstm_h = self.F_init_h(ctx.view(batch_size, -1))
         lstm_h = lstm_h.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
-        #lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
-        lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        lstm_c = self.F_init_c(ctx.view(batch_size, -1))
+        lstm_c = lstm_c.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
         initial_state = (lstm_h, lstm_c)
         return initial_state
 
@@ -903,12 +908,12 @@ parser.add_argument('--vocabsize', type=int, default=159996, help='Vocabulary si
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
-parser.add_argument('--encoder_layers', type=int, default=2)
+parser.add_argument('--encoder_layers', type=int, default=3)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
 parser.add_argument('--size_context', type=int, default=128)
 parser.add_argument('--size_sentence', type=int, default=64)
-parser.add_argument('--size_attn', type=int, default=32)
+parser.add_argument('--size_attn', type=int, default=64)
 parser.add_argument('--decoder_size_sentence', type=int, default=256)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=30)
@@ -924,7 +929,7 @@ parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
 parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
-parser.add_argument('--adversarial_sample', type=int, default=1)
+parser.add_argument('--adversarial_sample', type=int, default=0)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
@@ -1281,7 +1286,9 @@ while True:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
-                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1))
+                BLEUscores.append(bleu_score.sentence_bleu(
+                        [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
+                        + (num_words * .01) / np.sqrt(itr))
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
