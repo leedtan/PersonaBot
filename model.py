@@ -457,11 +457,15 @@ class Decoder(NN.Module):
         if state_size == None:
             state_size = in_size
         self._state_size = state_size
-        self.F_init = NN.Sequential(
+        self.F_init_h = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
                 NN.LeakyReLU(),
-                NN.Linear(state_size * num_layers, state_size * num_layers),
-                NN.Tanh(),
+                NN.Linear(state_size * num_layers, state_size * num_layers)
+                )
+        self.F_init_c = NN.Sequential(
+                NN.Linear(init_size, state_size * num_layers),
+                NN.LeakyReLU(),
+                NN.Linear(state_size * num_layers, state_size * num_layers)
                 )
         self.F_in = NN.Sequential(
             NN.Linear(in_size, in_size//2),
@@ -491,10 +495,10 @@ class Decoder(NN.Module):
         init_weights(self.AttentionDecoderCtx)
 
     def zero_state(self, batch_size, ctx):
-        lstm_h = self.F_init(ctx.view(batch_size, -1))
+        lstm_h = self.F_init_h(ctx.view(batch_size, -1))
         lstm_h = lstm_h.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
-        #lstm_h = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
-        lstm_c = tovar(T.zeros(self.rnn.num_layers, batch_size, self.rnn.hidden_size))
+        lstm_c = self.F_init_c(ctx.view(batch_size, -1))
+        lstm_c = lstm_c.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
         initial_state = (lstm_h, lstm_c)
         return initial_state
 
@@ -1272,7 +1276,7 @@ while True:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
-                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1))
+                BLEUscores.append(bleu_score.sentence_bleu([real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method4))
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
