@@ -1127,6 +1127,7 @@ while True:
 
         loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
         loss, reg = loss[0],reg[0]
+        print(loss, grad_norm)
         print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
         if np.all(~np.isnan(tonumpy(loss))):
             loss_nan = 1
