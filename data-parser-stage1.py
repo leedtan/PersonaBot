@@ -40,7 +40,7 @@ for dir_ in os.listdir(args.dataroot):
                 words = nltk.word_tokenize(sentence.decode('utf-8').lower())
                 wordcount_in_file.extend(words)
 
-                if speaker == prev_speaker:
+                if speaker == prev_speaker and speaker != '':
                     if prev_addressee == '':
                         addressee_list[-1] = addressee
                         prev_addressee = addressee
