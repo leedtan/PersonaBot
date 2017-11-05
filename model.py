@@ -1250,7 +1250,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0 and itr > 300:
+        if itr % 10 == 0 and itr > 100:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
@@ -1277,7 +1277,8 @@ while True:
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
                 BLEUscores.append(bleu_score.sentence_bleu(
-                        [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1) + num_words / 10000)
+                        [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
+                        + (num_words * .1) / np.sqrt(itr))
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
