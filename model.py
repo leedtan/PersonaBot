@@ -461,7 +461,7 @@ class Decoder(NN.Module):
                 NN.Linear(init_size, state_size * num_layers),
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers),
-                NN.tanh()
+                NN.Tanh()
                 )
         self.F_init_c = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
