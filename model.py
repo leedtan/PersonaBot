@@ -542,6 +542,7 @@ class Decoder(NN.Module):
         context_encodings = context_encodings.unsqueeze(2)
         context_encodings = context_encodings.expand(
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
+        self.context_encodings = context_encodings
 
         #embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
         embed_seq = wd_emb.contiguous()
@@ -551,10 +552,13 @@ class Decoder(NN.Module):
         embed, (h, c) = dynamic_rnn(
                 self.rnn, embed_seq, sentence_lengths_padded.contiguous().view(-1),
                 initial_state)
+        self.rnn_output = embed
+        self.rnn_state = (h, c)
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
         wd_emb_attn = wd_emb[:,:,:maxwordsmessage,:]
         embed_attn = T.cat((embed, wd_emb_attn),3)
+        self.embed_attn = embed_attn
 
         # TODO: describe @size_wd_mask
         size_wd_mask = [batch_size, num_turns, maxwordsmessage, maxwordsmessage]
@@ -572,6 +576,7 @@ class Decoder(NN.Module):
         
         
         attn = self.SeltAttentionWd(embed_attn, embed, wd_mask)
+        self.attn = attn
         
         
         size_ctx_mask = [batch_size, num_turns, num_turns, maxwordsmessage]
@@ -588,6 +593,7 @@ class Decoder(NN.Module):
         
         embed = T.cat((embed_attn, attn),3)
         attn = self.AttentionDecoderCtx(ctx_for_attn, embed, ctx_mask)
+        self.attn2 = attn
         embed = T.cat((embed, attn),3)
 
         if wd_target is None:
@@ -1142,14 +1148,17 @@ while True:
         if np.any(np.isnan(tonumpy(loss))):
             loss_nan = 1
             print('LOSS NAN')
+            raise ValueError
             continue
         if np.any(np.isnan(tonumpy(reg))):
             reg_nan = 1
             print('REG NAN')
+            raise ValueError
             continue
         if np.any(np.isnan(tonumpy(grad_norm))):
             grad_nan = 1
             print('grad_norm NAN')
+            raise ValueError
             continue
         #print('Grad norm', grad_norm)
         assert np.all(~np.isnan(tonumpy(loss)))
@@ -1255,7 +1264,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0 and itr > 100:
+        if itr % 1 == 0 and itr > 30000:
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
