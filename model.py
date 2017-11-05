@@ -1026,7 +1026,7 @@ while True:
     for item in dataloader:
         if itr % scatter_entropy_freq == 0:
             adv_style = 1 - adv_style
-            adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
+            adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 1000))
         itr += 1
 
         turns, sentence_lengths_padded, speaker_padded, \
