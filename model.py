@@ -1139,7 +1139,7 @@ while True:
             grad_nan = 1
             print('grad_norm NAN')
             continue
-        #print('Grad norm', grad_norm)
+        print('Grad norm', grad_norm)
         loss, reg = loss[0],reg[0]
         assert np.all(~np.isnan(tonumpy(loss)))
         assert np.all(~np.isnan(tonumpy(reg)))
