@@ -910,7 +910,7 @@ parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--lr', type=float, default=3e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -992,8 +992,8 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                state_size=decoder_size_sentence, 
                num_layers = args.decoder_layers))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
-#opt = T.optim.Adam(params, lr=args.lr)
-opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-7)
+opt = T.optim.Adam(params, lr=args.lr)
+#opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-7)
 
 dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
