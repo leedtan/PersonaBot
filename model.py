@@ -213,7 +213,8 @@ class Attention(NN.Module):
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
             NN.LeakyReLU(),
-            NN.Linear(size_attn, 1))
+            NN.Linear(size_attn, 1),
+            LeakySoftplusReversed())
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
@@ -234,17 +235,22 @@ class SelfAttention(Attention):
         self.softmax = NN.Softmax()
         # Context projector
         self.F_ctx = NN.Sequential(
-            NN.Linear(size_context, size_context))
+            NN.Linear(size_context, size_attn*2),
+            NN.LeakyReLU(),
+            NN.Linear(size_attn*2, size_context))
         # Attendee projector
         self.F_head = NN.Sequential(
-            NN.Linear(size_head, size_attn))
+            NN.Linear(size_head, size_attn*2),
+            NN.LeakyReLU(),
+            NN.Linear(size_attn*2, size_attn))
         # Takes in context and attendee and produces a weight
         self.F_attn = NN.Sequential(
             NN.Linear(size_attn + size_context, size_attn),
             NN.LeakyReLU(),
+            NN.Linear(size_attn, size_attn),
+            NN.LeakyReLU(),
             NN.Linear(size_attn, 1),
-            LeakySoftplusReversed(),
-            )
+            LeakySoftplusReversed())
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
