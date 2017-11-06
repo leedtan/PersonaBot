@@ -572,7 +572,7 @@ class Decoder(NN.Module):
                     for i_wd_ctx in range(size_wd_mask[3]):
                         if ((sentence_lengths_padded[i_b, i_sent] <= i_wd_ctx)
                                 or (turns[i_b] <= i_sent)
-                                or (i_wd_ctx < i_wd_head)):
+                                or (i_wd_ctx > i_wd_head)):
                             wd_mask[i_b, i_sent, i_wd_head, i_wd_ctx] = 0
         wd_mask = tovar(wd_mask)
         
@@ -589,7 +589,7 @@ class Decoder(NN.Module):
                 for i_head in range(size_ctx_mask[2]):
                     if ((turns[i_b] <= i_ctx)
                         or (turns[i_b] <= i_head)
-                        or (i_ctx < i_head)):
+                        or (i_ctx > i_head)):
                             ctx_mask[i_b, i_ctx, i_head, :] = 0
         ctx_mask = tovar(ctx_mask)
         
@@ -1007,8 +1007,8 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 named_params = sum([list(m.named_parameters())
     for m in [user_emb, word_emb, enc, context, decoder]], [])
-#opt = T.optim.Adam(params, lr=args.lr)
-opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
+opt = T.optim.Adam(params, lr=args.lr)
+#opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
 dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
