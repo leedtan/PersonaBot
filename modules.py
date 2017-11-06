@@ -154,7 +154,10 @@ def init_lstm(lstm):
 def init_weights(module):
     for name, param in module.named_parameters():
         if name.find('weight') != -1:
-            INIT.xavier_uniform(param.data)
+            if len(param.size()) == 1:
+                INIT.uniform(param.data, 1)
+            else:
+                INIT.xavier_uniform(param.data)
         elif name.find('bias') != -1:
             INIT.constant(param.data, 0)
 
