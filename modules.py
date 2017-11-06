@@ -1,4 +1,4 @@
-\
+
 import torch as T
 import torch.nn as NN
 import torch.nn.functional as F
@@ -288,7 +288,7 @@ def weighted_softmax(logits, weights):
     Computes:
     p[i] = (w[i] * exp(l[i])) / sum(w[j] * exp(l[j]))
     '''
-    wl = T.exp(logits) * weights
+    wl = T.exp(logits - logits.max(1, keepdim=True)[0]) * weights
     wl = wl / (wl.sum(1)+1e-8).unsqueeze(1)
     return wl
 
