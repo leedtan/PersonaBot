@@ -23,7 +23,7 @@ class UbuntuDialogDataset(Dataset):
                  min_user_occurrence=5,
                  max_sentence_length_allowed=50,
                  max_turns_allowed=10,
-                 coalesce_types=['path'],
+                 coalesce_types=[],
                  ):
         '''
         Each item is a three-element key-value pair:

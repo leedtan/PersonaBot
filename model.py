@@ -937,14 +937,31 @@ parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
 args = parser.parse_args()
 
-dataset = UbuntuDialogDataset(args.dataroot,
-                              wordcount_pkl=args.metaroot + '/wordcount.pkl',
-                              usercount_pkl=args.metaroot + '/usercount.pkl',
-                              turncount_pkl=args.metaroot + '/turncount.pkl',
-                              max_sentence_lengths_pkl=args.metaroot + '/max_sentence_lengths.pkl',
-                              max_sentence_length_allowed=args.max_sentence_length_allowed,
-                              max_turns_allowed=args.max_turns_allowed,
-                              vocab_size=args.vocabsize)
+datasets = []
+dataloaders = []
+for subdir in os.listdir(args.dataroot):
+    print('Loading dataset:', subdir)
+    dataset = UbuntuDialogDataset(os.path.join(args.dataroot, subdir),
+                                  wordcount_pkl=args.metaroot + '/wordcount.pkl',
+                                  usercount_pkl=args.metaroot + '/usercount.pkl',
+                                  turncount_pkl=args.metaroot + '/turncount.pkl',
+                                  max_sentence_lengths_pkl=args.metaroot + '/max_sentence_lengths.pkl',
+                                  max_sentence_length_allowed=args.max_sentence_length_allowed,
+                                  max_turns_allowed=args.max_turns_allowed,
+                                  vocab_size=args.vocabsize)
+    datasets.append(dataset)
+    # Note that all datasets share the same vocabulary, users, and all the metadatas.
+    # The only difference between datasets are the samples.
+    dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
+    dataloaders.append(dataloader)
+
+print('Checking consistency...')
+for dataset in datasets:
+    assert all(w1 == w2 for w1, w2 in zip(datasets[0].vocab, dataset.vocab))
+    assert all(u1 == u2 for u1, u2 in zip(datasets[0].users, dataset.users))
+
+dataloader = round_robin_dataloader(dataloaders)
+
 try:
     os.mkdir(args.logdir)
 except:
@@ -1007,8 +1024,6 @@ named_params = sum([list(m.named_parameters())
     for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
-
-dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
 
 eos = dataset.index_word(EOS)

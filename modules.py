@@ -349,3 +349,17 @@ def init_glove(word_emb, vcb, ivcb, dataroot):
 
     print("Match words in glove : " + str(match))
     return emb
+
+
+def round_robin_dataloader(dataloaders):
+    dataloader_iters = [iter(dataloader) for dataloader in dataloaders]
+    i = 0
+
+    while True:
+        try:
+            item = next(dataloader_iters[i])
+        except StopIteration:
+            dataloader_iters[i] = iter(dataloaders[i])
+            item = next(dataloader_iters[i])
+        i = (i + 1) % len(dataloaders)
+        yield item
