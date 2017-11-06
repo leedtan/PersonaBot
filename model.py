@@ -213,7 +213,8 @@ class Attention(NN.Module):
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
             NN.LeakyReLU(),
-            NN.Linear(size_attn, 1))
+            NN.Linear(size_attn, 1),
+            LeakySoftplusReversed())
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
@@ -248,7 +249,8 @@ class SelfAttention(Attention):
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
             NN.LeakyReLU(),
-            NN.Linear(size_attn, 1))
+            NN.Linear(size_attn, 1),
+            LeakySoftplusReversed())
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
@@ -990,8 +992,8 @@ decoder_size_sentence = args.decoder_size_sentence
 decoder_beam_size = args.decoder_beam_size
 decoder_max_generated = args.decoder_max_generated
 
-user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0))
-word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0))
+user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0, scale_grad_by_freq=True))
+word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0, scale_grad_by_freq=True))
 # If you want to preprocess other glove embeddings.
 # preprocess_glove(args.gloveroot, 100)
 word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
@@ -1003,8 +1005,10 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                state_size=decoder_size_sentence, 
                num_layers = args.decoder_layers))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
-opt = T.optim.Adam(params, lr=args.lr)
-#opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-7)
+named_params = sum([list(m.named_parameters())
+    for m in [user_emb, word_emb, enc, context, decoder]], [])
+#opt = T.optim.Adam(params, lr=args.lr)
+opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
 dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
 
@@ -1039,7 +1043,9 @@ while True:
             adv_style = 1 - adv_style
             adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 1000))
         itr += 1
-
+        if itr % 100 == 0:
+            for p, v in named_params:
+                print(p, v.data.min(), v.data.max())
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
         words_padded = tovar(words_padded)
