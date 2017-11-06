@@ -200,18 +200,22 @@ class Attention(NN.Module):
         # Context projector
         self.F_ctx = NN.Sequential(
             NN.Linear(size_context, size_attn*2),
+            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
         # Attendee projector
         self.F_head = NN.Sequential(
             NN.Linear(size_head, size_attn*2),
+            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
         # Takes in context and attendee and produces a weight
         self.F_attn = NN.Sequential(
             NN.Linear(size_attn*2, size_attn),
+            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
+            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, 1))
         init_weights(self.F_head)
@@ -235,18 +239,22 @@ class SelfAttention(Attention):
         # Context projector
         self.F_ctx = NN.Sequential(
             NN.Linear(size_context, size_attn*2),
+            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_context))
         # Attendee projector
         self.F_head = NN.Sequential(
             NN.Linear(size_head, size_attn*2),
+            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
         # Takes in context and attendee and produces a weight
         self.F_attn = NN.Sequential(
             NN.Linear(size_attn + size_context, size_attn),
+            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
+            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, 1))
         init_weights(self.F_head)
@@ -459,17 +467,21 @@ class Decoder(NN.Module):
         self._state_size = state_size
         self.F_init_h = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
+                NN.modules.batchnorm._BatchNorm(state_size * num_layers),
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers),
+                NN.modules.batchnorm._BatchNorm(state_size * num_layers),
                 NN.Tanh()
                 )
         self.F_init_c = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
+                NN.modules.batchnorm._BatchNorm(state_size * num_layers),
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers)
                 )
         self.F_in = NN.Sequential(
             NN.Linear(in_size, in_size//2),
+            NN.modules.batchnorm._BatchNorm(in_size//2),
             NN.LeakyReLU(),
             NN.Linear(in_size//2, RNN_in_size)
             )
@@ -483,6 +495,7 @@ class Decoder(NN.Module):
         decoder_out_size = state_size + size_attn*2 + size_wd
         self.F_reconstruct = NN.Sequential(
             NN.Linear(decoder_out_size, decoder_out_size//2),
+            NN.modules.batchnorm._BatchNorm(decoder_out_size//2),
             NN.LeakyReLU(),
             NN.Linear(decoder_out_size//2, size_wd)
             )
@@ -927,9 +940,9 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
-parser.add_argument('--max_turns_allowed', type=int, default=5)
+parser.add_argument('--max_turns_allowed', type=int, default=8)
 parser.add_argument('--num_loader_workers', type=int, default=4)
-parser.add_argument('--adversarial_sample', type=int, default=0)
+parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
@@ -1022,6 +1035,13 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 named_params = sum([list(m.named_parameters())
     for m in [user_emb, word_emb, enc, context, decoder]], [])
+
+def enable_train(sub_modules):
+    for m in sub_modules:
+        m.train()
+def enable_eval(sub_modules):
+    for m in sub_modules:
+        m.eval()
 opt = T.optim.Adam(params, lr=args.lr)
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
@@ -1056,14 +1076,18 @@ while True:
             adv_style = 1 - adv_style
             adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 1000))
         itr += 1
+        '''
         if itr % 100 == 0:
             for p, v in named_params:
                 print(p, v.data.min(), v.data.max())
+        '''
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
         speaker_padded = tovar(speaker_padded)
+        
+        enable_train([user_emb, word_emb, enc, context, decoder])
         #SO far not used
         #addressee_padded = tovar(addressee_padded)
         #addres_b = user_emb(addressee_padded)
@@ -1158,6 +1182,7 @@ while True:
         loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
         loss, reg = loss[0],reg[0]
         #print(loss, grad_norm)
+        '''
         if itr % 100 == 0:
             print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
         if np.any(np.isnan(tonumpy(loss))):
@@ -1176,6 +1201,7 @@ while True:
             raise ValueError
             continue
         #print('Grad norm', grad_norm)
+        '''
         assert np.all(~np.isnan(tonumpy(loss)))
         assert np.all(~np.isnan(tonumpy(reg)))
 
@@ -1279,7 +1305,8 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 1 == 0 and itr > 30000:
+        if itr % 1 == 0 and itr > 1000:
+            enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
@@ -1323,7 +1350,8 @@ while True:
             logprobs.backward(args.lambda_pg * -cuda(T.Tensor(reward.T)))
             pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
             pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
-            print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
+            if itr % 10 == 0:
+                print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
             train_writer.add_summary(
                     TF.Summary(
                         value=[
