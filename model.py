@@ -213,8 +213,7 @@ class Attention(NN.Module):
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
             NN.LeakyReLU(),
-            NN.Linear(size_attn, 1),
-            LeakySoftplusReversed())
+            NN.Linear(size_attn, 1))
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
@@ -249,8 +248,7 @@ class SelfAttention(Attention):
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
             NN.LeakyReLU(),
-            NN.Linear(size_attn, 1),
-            LeakySoftplusReversed())
+            NN.Linear(size_attn, 1))
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)

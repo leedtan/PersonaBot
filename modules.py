@@ -43,12 +43,6 @@ def div_roundup(x, d):
     return (x + d - 1) / d
 def roundup(x, d):
     return (x + d - 1) / d * d
-class LeakySoftplusReversed(NN.Module):
-    def __init__(self):
-        NN.Module.__init__(self)
-
-    def forward(self, x):
-        return -F.softplus(-x) + x / 100
 
 def log_sigmoid(x):
     return -F.softplus(-x)
@@ -293,7 +287,7 @@ def weighted_softmax(logits, weights):
     Computes:
     p[i] = (w[i] * exp(l[i])) / sum(w[j] * exp(l[j]))
     '''
-    wl = T.exp(logits) * weights
+    wl = T.exp(logits - logits.max(1, keepdim=True)[0]) * weights
     wl = wl / (wl.sum(1)+1e-8).unsqueeze(1)
     return wl
 
