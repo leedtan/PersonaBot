@@ -1,4 +1,4 @@
-\
+
 import torch as T
 import torch.nn as NN
 import torch.nn.functional as F
@@ -43,7 +43,12 @@ def div_roundup(x, d):
     return (x + d - 1) / d
 def roundup(x, d):
     return (x + d - 1) / d * d
+class LeakySoftplusReversed(NN.Module):
+    def __init__(self):
+        NN.Module.__init__(self)
 
+    def forward(self, x):
+        return -F.softplus(-x) + x / 100
 
 def log_sigmoid(x):
     return -F.softplus(-x)
