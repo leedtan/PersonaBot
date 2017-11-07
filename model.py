@@ -517,9 +517,6 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, num_words+1,
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 opt = T.optim.Adam(params, lr=args.lr)
 
-
-dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
-
 itr = args.loaditerations
 epoch = 0
 usr_std = wd_std = sent_std = ctx_std = 1e-7
