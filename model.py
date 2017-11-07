@@ -651,6 +651,7 @@ class Decoder(NN.Module):
         :param embed_seq: max_words, num_sentences_decoding, state_size
         :param wd_emb_for_attention: max_words, num_sentences_decoding, size_wd
         """
+        global sentence_lengths_padded, turns
         embed_seq = cuda(embed_seq)
         state_size = self._state_size
 
@@ -664,6 +665,14 @@ class Decoder(NN.Module):
         
         size_wd_mask = [1, num_decoded, num_wds, num_wds]
         wd_mask = T.ones(*size_wd_mask)
+        for i_b in range(size_wd_mask[0]):
+            for i_sent in range(size_wd_mask[1]):
+                for i_wd_head in range(size_wd_mask[2]):
+                    for i_wd_ctx in range(size_wd_mask[3]):
+                        if ((sentence_lengths_padded[i_b, i_sent] <= i_wd_ctx)
+                                or (turns[i_b] <= i_sent)
+                                or (i_wd_ctx > i_wd_head)):
+                            wd_mask[i_b, i_sent, i_wd_head, i_wd_ctx] = 0
         wd_mask = tovar(wd_mask)
         
         attn = self.SeltAttentionWd(embed_attn.unsqueeze(0), embed.unsqueeze(0), wd_mask)[0]
@@ -672,6 +681,13 @@ class Decoder(NN.Module):
         
         size_ctx_mask = [1, num_decoded, num_decoded, num_wds]
         ctx_mask = T.ones(*size_ctx_mask)
+        for i_b in range(size_ctx_mask[0]):
+            for i_ctx in range(size_ctx_mask[1]):
+                for i_head in range(size_ctx_mask[2]):
+                    if ((turns[i_b] <= i_ctx)
+                        or (turns[i_b] <= i_head)
+                        or (i_ctx > i_head)):
+                            ctx_mask[i_b, i_ctx, i_head, :] = 0
         ctx_mask = tovar(ctx_mask)
         attn = self.AttentionDecoderCtx(ctx_for_attn, embed.unsqueeze(0), ctx_mask)
         embed = T.cat((embed, attn[0,:,:,:]),2)
