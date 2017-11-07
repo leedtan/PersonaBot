@@ -679,7 +679,7 @@ class Decoder(NN.Module):
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
         embed = embed.view(num_decoded, num_wds, state_size + size_attn + size_attn + size_wd)[:,-1,:].contiguous()
         out = self.softmax(embed.view(num_decoded, state_size + size_attn + size_attn + size_wd))
-        out = gaussian(out, True, 0, 1/(1+np.sqrt(itr)))
+        #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
@@ -965,10 +965,10 @@ dataloader = round_robin_dataloader(dataloaders)
 
 
 extra_penalty = np.zeros(args.max_sentence_length_allowed+1)
-extra_penalty[0] = -.5
-extra_penalty[1] = -.4
-extra_penalty[2] = -.3
-extra_penalty[3] = -.2
+extra_penalty[0] = 5
+extra_penalty[1] = 4
+extra_penalty[2] = 3
+extra_penalty[3] = 2
 
 
 try:
