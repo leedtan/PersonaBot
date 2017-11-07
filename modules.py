@@ -186,7 +186,11 @@ class ConvMask(NN.Module):
         mask = length_mask((x.size()[0], x.size()[2]),convlengths).unsqueeze(1)
         x = x * mask
         return x
-
+def gaussian(ins, is_training, mean, stddev):
+    if is_training:
+        noise = tovar(ins.data.new(ins.size()).normal_(mean, stddev))
+        return ins + noise
+    return ins
 class HierarchicalLogSoftmax(NN.Module):
     def __init__(self, input_size, n_classes, n_words):
         '''
