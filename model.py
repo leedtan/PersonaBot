@@ -964,12 +964,10 @@ dataloader = round_robin_dataloader(dataloaders)
 
 
 extra_penalty = np.zeros(args.max_sentence_length_allowed+1)
-extra_penalty[0] = -5
-extra_penalty[1] = -4
-extra_penalty[2] = -3
-extra_penalty[3] = -2
-extra_penalty[-2] = -1
-extra_penalty[-1] = -2
+extra_penalty[0] = -.5
+extra_penalty[1] = -.4
+extra_penalty[2] = -.3
+extra_penalty[3] = -.2
 
 
 try:
@@ -1333,7 +1331,7 @@ while True:
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
                 curr_bleu += num_words / (1+np.sqrt(itr))
                 
-                curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr/100))
+                curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
                 BLEUscores.append(curr_bleu)
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
