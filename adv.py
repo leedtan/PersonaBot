@@ -8,11 +8,11 @@ def adversarial_word_users(wds_b, usrs_b, turns,
         
     max_turns = turns.max()
     max_words = wds_b.size()[2]
-    encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
+    encodings = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),
                 usrs_b.view(batch_size * max_turns, size_usr), 
                 sentence_lengths_padded.view(-1))
     encodings = encodings.view(batch_size, max_turns, -1)
-    ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+    ctx, _ = context(encodings, turns)
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
     # Training:
@@ -28,17 +28,17 @@ def adversarial_word_users(wds_b, usrs_b, turns,
         usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale * usr_std- \
             (usrs_adv < 0).type(T.FloatTensor) * scale * usr_std
     else:
-        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 100
-        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 100
+        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 10
+        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 10
     wds_adv, usrs_adv = wds_adv.data, usrs_adv.data
     return wds_adv, usrs_adv, tonumpy(loss)[0]
     
 def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
                       max_turns, context, turns, sentence_lengths_padded,
-                      words_padded, decoder, usr_std, wd_std, sent_std, wds_h, scale=1e-3, style=0):
+                      words_padded, decoder, usr_std, wd_std, sent_std, scale=1e-3, style=0):
     
     encodings = encodings.view(batch_size, max_turns, -1)
-    ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+    ctx, _ = context(encodings, turns)
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
     # Training:
@@ -55,14 +55,14 @@ def adversarial_encodings_wds_usrs(encodings, batch_size,wds_b,usrs_b,
         usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale * usr_std - \
             (usrs_adv < 0).type(T.FloatTensor) * scale * usr_std
     else:
-        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 100
-        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 100
-        enc_adv = enc_adv * scale * sent_std / T.norm(enc_adv) * 100
+        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 10
+        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 10
+        enc_adv = enc_adv * scale * sent_std / T.norm(enc_adv) * 10
     wds_adv, usrs_adv, enc_adv = wds_adv.data, usrs_adv.data, enc_adv.data
     return wds_adv, usrs_adv, enc_adv, tonumpy(loss)[0]
     
 def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
-                      words_padded, decoder, usr_std, wd_std, ctx_std, wds_h, scale=1e-3, style=0):
+                      words_padded, decoder, usr_std, wd_std, ctx_std, scale=1e-3, style=0):
     max_output_words = sentence_lengths_padded[:, 1:].max()
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
     # Training:
@@ -79,9 +79,9 @@ def adversarial_context_wds_usrs(ctx, sentence_lengths_padded,wds_b,usrs_b,
         usrs_adv = (usrs_adv > 0).type(T.FloatTensor) * scale*usr_std - \
             (usrs_adv < 0).type(T.FloatTensor) * scale*usr_std
     else:
-        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 100
-        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 100
-        ctx_adv = ctx_adv * scale * ctx_std / T.norm(ctx_adv) * 100
+        wds_adv = wds_adv * scale * wd_std / T.norm(wds_adv) * 10
+        usrs_adv = usrs_adv * scale * usr_std / T.norm(usrs_adv) * 10
+        ctx_adv = ctx_adv * scale * ctx_std / T.norm(ctx_adv) * 10
     wds_adv, usrs_adv, ctx_adv = wds_adv.data, usrs_adv.data, ctx_adv.data
     return wds_adv, usrs_adv, ctx_adv, tonumpy(loss)[0]
     '''
