@@ -200,22 +200,18 @@ class Attention(NN.Module):
         # Context projector
         self.F_ctx = NN.Sequential(
             NN.Linear(size_context, size_attn*2),
-            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
         # Attendee projector
         self.F_head = NN.Sequential(
             NN.Linear(size_head, size_attn*2),
-            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
         # Takes in context and attendee and produces a weight
         self.F_attn = NN.Sequential(
             NN.Linear(size_attn*2, size_attn),
-            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
-            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, 1))
         init_weights(self.F_head)
@@ -239,22 +235,18 @@ class SelfAttention(Attention):
         # Context projector
         self.F_ctx = NN.Sequential(
             NN.Linear(size_context, size_attn*2),
-            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_context))
         # Attendee projector
         self.F_head = NN.Sequential(
             NN.Linear(size_head, size_attn*2),
-            NN.modules.batchnorm._BatchNorm(size_attn*2),
             NN.LeakyReLU(),
             NN.Linear(size_attn*2, size_attn))
         # Takes in context and attendee and produces a weight
         self.F_attn = NN.Sequential(
             NN.Linear(size_attn + size_context, size_attn),
-            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, size_attn),
-            NN.modules.batchnorm._BatchNorm(size_attn),
             NN.LeakyReLU(),
             NN.Linear(size_attn, 1))
         init_weights(self.F_head)
@@ -467,21 +459,17 @@ class Decoder(NN.Module):
         self._state_size = state_size
         self.F_init_h = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
-                NN.modules.batchnorm._BatchNorm(state_size * num_layers),
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers),
-                NN.modules.batchnorm._BatchNorm(state_size * num_layers),
                 NN.Tanh()
                 )
         self.F_init_c = NN.Sequential(
                 NN.Linear(init_size, state_size * num_layers),
-                NN.modules.batchnorm._BatchNorm(state_size * num_layers),
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers)
                 )
         self.F_in = NN.Sequential(
             NN.Linear(in_size, in_size//2),
-            NN.modules.batchnorm._BatchNorm(in_size//2),
             NN.LeakyReLU(),
             NN.Linear(in_size//2, RNN_in_size)
             )
@@ -495,7 +483,6 @@ class Decoder(NN.Module):
         decoder_out_size = state_size + size_attn*2 + size_wd
         self.F_reconstruct = NN.Sequential(
             NN.Linear(decoder_out_size, decoder_out_size//2),
-            NN.modules.batchnorm._BatchNorm(decoder_out_size//2),
             NN.LeakyReLU(),
             NN.Linear(decoder_out_size//2, size_wd)
             )
@@ -692,6 +679,7 @@ class Decoder(NN.Module):
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
         embed = embed.view(num_decoded, num_wds, state_size + size_attn + size_attn + size_wd)[:,-1,:].contiguous()
         out = self.softmax(embed.view(num_decoded, state_size + size_attn + size_attn + size_wd))
+        #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
@@ -975,6 +963,14 @@ for dataset in datasets:
 
 dataloader = round_robin_dataloader(dataloaders)
 
+
+extra_penalty = np.zeros(args.max_sentence_length_allowed+1)
+extra_penalty[0] = 5
+extra_penalty[1] = 4
+extra_penalty[2] = 3
+extra_penalty[3] = 2
+
+
 try:
     os.mkdir(args.logdir)
 except:
@@ -1087,7 +1083,7 @@ while True:
         words_reverse_padded = tovar(words_reverse_padded)
         speaker_padded = tovar(speaker_padded)
         
-        enable_train([user_emb, word_emb, enc, context, decoder])
+        #enable_train([user_emb, word_emb, enc, context, decoder])
         #SO far not used
         #addressee_padded = tovar(addressee_padded)
         #addres_b = user_emb(addressee_padded)
@@ -1305,8 +1301,8 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 1 == 0 and itr > 1000:
-            enable_eval([user_emb, word_emb, enc, context, decoder])
+        if itr % 5 == 0 and itr > 10:
+            #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
                       usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
@@ -1332,9 +1328,12 @@ while True:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
-                BLEUscores.append(bleu_score.sentence_bleu(
+                curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
-                        + (num_words * .01) / np.sqrt(itr))
+                curr_bleu += num_words / (1+np.sqrt(itr))
+                
+                curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
+                BLEUscores.append(curr_bleu)
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
