@@ -112,9 +112,14 @@ class UbuntuDialogDataset(Dataset):
         speaker_idx = [self.index_user(u) for u in item['speaker']]
         word_idx = [[self.index_word(w) for w in s] for s in item['words']]
 
-        addressee_idx = addressee_idx[:self._max_turns_allowed]
-        speaker_idx = speaker_idx[:self._max_turns_allowed]
-        word_idx = word_idx[:self._max_turns_allowed]
+        if len(speaker_idx) > self._max_turns_allowed:
+            start = np.random.randint(len(speaker_idx) - self._max_turns_allowed)
+        else:
+            start = 0
+
+        addressee_idx = addressee_idx[start:start+self._max_turns_allowed]
+        speaker_idx = speaker_idx[start:start+self._max_turns_allowed]
+        word_idx = word_idx[start:start+self._max_turns_allowed]
         return addressee_idx, speaker_idx, word_idx
 
     def translate_item(self, addressee_idx, speaker_idx, word_idx):
