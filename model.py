@@ -3,6 +3,7 @@ from torch.nn import Parameter
 from functools import wraps
 from nltk.translate import bleu_score
 
+import time
 import torch as T
 import torch.nn as NN
 import torch.nn.functional as F
@@ -1081,9 +1082,12 @@ if modelnameload:
         decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
 adv_style = 0
 scatter_entropy_freq = 200
+time_train = 0
+time_decode = 0
 while True:
     epoch += 1
     for item in dataloader:
+        start_train = time.time()
         if itr % scatter_entropy_freq == 0:
             adv_style = 1 - adv_style
             adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 1000))
@@ -1252,6 +1256,8 @@ while True:
                     value=[
                         TF.Summary.Value(tag='loss', simple_value=loss),
                         TF.Summary.Value(tag='reg', simple_value=reg),
+                        TF.Summary.Value(tag='time_train', simple_value=time_train),
+                        TF.Summary.Value(tag='time_decode', simple_value=time_decode),
                         TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
                         TF.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
                         TF.Summary.Value(tag='wd_std', simple_value=wd_std),
@@ -1262,7 +1268,7 @@ while True:
                     ),
                 itr
                 )
-        
+        time_train += time.time() - start_train
         if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:].contiguous(),
                                  usrs_b_decode[:1:], sentence_lengths_padded[:1,1:])
@@ -1318,6 +1324,7 @@ while True:
 
         # Train with Policy Gradient on BLEU scores once for a while.
         if itr % 5 == 0 and itr > 2:
+            start_decode = time.time()
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
@@ -1421,7 +1428,8 @@ while True:
                         print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
                     if words_padded_decode[i, 1].sum() == 0:
                         break
-
+            time_decode += time.time() - start_decode
+        
         # After all these gibberish, add back the recorded grads from PPL and take a step
         for p in params:
             if p.grad is not None and p in grads:
