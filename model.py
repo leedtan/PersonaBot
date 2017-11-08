@@ -951,7 +951,7 @@ parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
-parser.add_argument('--lambda_pg', type=float, default=.1)
+parser.add_argument('--lambda_pg', type=float, default=10)
 args = parser.parse_args()
 
 datasets = []
@@ -1317,7 +1317,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 5 == 0 and itr > 10:
+        if itr % 2 == 0 and itr > 2:
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:,:].view(-1, size_context + size_attn),
@@ -1330,7 +1330,8 @@ while True:
             logprobs_np = tonumpy(logprobs)
 
             # Compute BLEU scores
-            real_sent = []
+            real_sent = []Fake: (None, None, [['<start>', 'i', 'want', 'no', 'okay', 'good', 'use', 'end', 'a', 'software', 'name', 'has', 'app', 'ath9k_htc', 'to', "'s", 'chat', 'do', 'ok', '.', 'argument', 'are', '<eos>']])
+
             gen_sent = []
             BLEUscores = []
             lengths_gen = []
@@ -1346,7 +1347,7 @@ while True:
                 gen_sent.append(hypothesis[idx, :num_words])
                 curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
-                curr_bleu += num_words / (1+np.sqrt(itr))
+                curr_bleu += num_words# / (1+np.sqrt(itr))
                 
                 curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
                 BLEUscores.append(curr_bleu)
@@ -1383,7 +1384,7 @@ while True:
 
             # Dump...
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
-            if itr % 100 == 0:
+            if itr % 10 == 0:
                 greedy_responses = tonumpy(greedy_responses)
                 
                 words_padded_decode = tonumpy(words_padded[0,:,:])
