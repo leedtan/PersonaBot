@@ -1254,6 +1254,7 @@ while True:
         train_writer.add_summary(
                 TF.Summary(
                     value=[
+                        TF.Summary.Value(tag='perplexity', simple_value=2 ** tonumpy(loss)),
                         TF.Summary.Value(tag='loss', simple_value=loss),
                         TF.Summary.Value(tag='reg', simple_value=reg),
                         TF.Summary.Value(tag='time_train', simple_value=time_train),
@@ -1264,6 +1265,7 @@ while True:
                         TF.Summary.Value(tag='usr_std', simple_value=usr_std),
                         TF.Summary.Value(tag='sent_std', simple_value=sent_std),
                         TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
+                        
                         ]
                     ),
                 itr
@@ -1323,7 +1325,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 5 == 0 and itr > 2:
+        if itr % 5 == 0 and itr > 10:
             start_decode = time.time()
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
@@ -1335,12 +1337,13 @@ while True:
             reference = tonumpy(words_padded[0,:turns[0],:])
             hypothesis = tonumpy(greedy_responses)
             logprobs_np = tonumpy(logprobs)
-
+            
             # Compute BLEU scores
             real_sent = []
             gen_sent = []
             BLEUscores = []
             lengths_gen = []
+            batch_words = Counter()
             smoother = bleu_score.SmoothingFunction()
             for idx in range(reference.shape[0]):
                 real_sent.append(reference[idx, :sentence_lengths_padded[0,idx]])
@@ -1351,22 +1354,27 @@ while True:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words])
+                batch_words.update(gen_sent[-1][1:])
                 curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
-                curr_bleu += num_words# / (1+np.sqrt(itr))
+                curr_bleu += num_words / (1+np.sqrt(itr))
                 
-                curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
+                #curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
                 BLEUscores.append(curr_bleu)
             
             # Use BLEU scores as reward, comparing it to baseline (moving average)
             baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
             reward = np.array(BLEUscores) - baseline
             reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
+            total_words = sum(batch_words.values())
+            for r in range(hypothesis.shape[0]):
+                for c in range(1,hypothesis.shape[1]):
+                    reward[r,c-1] -= (batch_words[hypothesis[r,c]]/total_words)**2
             assert np.all(~np.isnan(reward))
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
-
+            
             # Set the head gradients of the log-probabilities as negative of reward
             opt.zero_grad()
             logprobs.backward(args.lambda_pg * -cuda(T.Tensor(reward.T)))
