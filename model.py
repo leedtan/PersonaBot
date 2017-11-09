@@ -469,14 +469,16 @@ class Decoder(NN.Module):
                 NN.LeakyReLU(),
                 NN.Linear(state_size * num_layers, state_size * num_layers)
                 )
+        '''
         self.F_in = NN.Sequential(
             NN.Linear(in_size, in_size//2),
             NN.LeakyReLU(),
             NN.Linear(in_size//2, RNN_in_size)
             )
         init_weights(self.F_in)
+        '''
         self.rnn = NN.LSTM(
-                RNN_in_size,
+                in_size + 1,
                 state_size,
                 num_layers,
                 bidirectional=False,
@@ -546,8 +548,14 @@ class Decoder(NN.Module):
         self.context_encodings = context_encodings
 
         #embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
-        embed_seq = wd_emb.contiguous()
+        indexes_in_sent = tovar(T.arange(0,maxwordsmessage).unsqueeze(0).unsqueeze(0).unsqueeze(3).expand(
+                batch_size, maxlenbatch, maxwordsmessage,1
+                ))
+        
+        embed_seq = T.cat((wd_emb, indexes_in_sent),3).contiguous()
+        '''
         embed_seq = self.F_in(embed_seq.view(batch_size * maxlenbatch * maxwordsmessage,-1))
+        '''
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
         embed, (h, c) = dynamic_rnn(
@@ -657,7 +665,16 @@ class Decoder(NN.Module):
         state_size = self._state_size
 
         num_wds, num_decoded, state_size_seq = embed_seq.size()
+        '''
         embed_seq = self.F_in(embed_seq.view(num_wds * num_decoded, state_size_seq)).view(
+                num_wds, num_decoded, -1)
+        '''
+        indexes_in_sent = tovar(T.arange(0,num_wds).unsqueeze(1).unsqueeze(2).expand(
+                num_wds, num_decoded,1
+                ))
+        
+        embed_seq = T.cat((embed_seq, indexes_in_sent),2).contiguous()
+        embed_seq = embed_seq.view(
                 num_wds, num_decoded, -1)
         embed, current_state = self.rnn(embed_seq, init_state)
         embed = embed.permute(1, 0, 2).contiguous()
