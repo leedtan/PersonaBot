@@ -1353,7 +1353,7 @@ while True:
                 else:
                     num_words = num_words[0]
                 lengths_gen.append(num_words)
-                gen_sent.append(hypothesis[idx, :num_words])
+                gen_sent.append(hypothesis[idx, :num_words+1])
                 batch_words.update(gen_sent[-1][1:])
                 curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
