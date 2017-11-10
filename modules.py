@@ -67,27 +67,26 @@ def advanced_index(t, dim, index):
 
 
 def length_mask(size, length):
+    return mask_3d(size, length, False)
+
+def mask_3d(size, length, nan=True):
     length = tonumpy(length)
     batch_size = size[0]
     weight = T.zeros(*size)
-    for i in range(batch_size):
-        weight[i, :length[i]] = 1.
-    weight = tovar(weight)
-    return weight
-def mask_3d(size, length):
-    length = tonumpy(length)
-    batch_size = size[0]
-    weight = T.zeros(*size)/0
+    if nan:
+        weight = weight / 0
     for i in range(batch_size):
         weight[i, :length[i],:] = 1.
     weight = tovar(weight)
     return weight
 
-def mask_4d(size, length1, length2):
+def mask_4d(size, length1, length2, nan=True):
     length1 = tonumpy(length1)
     length2 = tonumpy(length2)
     batch_size = size[0]
-    weight = T.zeros(*size)/0
+    weight = T.zeros(*size)
+    if nan:
+        weight = weight / 0
     for i in range(batch_size):
         for j in range(length1[i]):
             weight[i, :length1[i], :length2[i,j],:] = 1.
@@ -96,7 +95,7 @@ def mask_4d(size, length1, length2):
 
 
 def dynamic_rnn(rnn, seq, length, initial_state):
-    length[length==0] = 1
+    length = length.clamp(min=1)
     length_sorted, length_sorted_idx = T.sort(length, 0, descending=True)
     _, length_inverse_idx = T.sort(length_sorted_idx)
     rnn_in = pack_padded_sequence(
