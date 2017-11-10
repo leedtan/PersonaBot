@@ -286,7 +286,7 @@ def add_scatterplot(writer, losses, scales, names, itr, log_dir,
     writer.add_summary(TF.Summary(value=[summary]), itr)
 
 
-def weighted_softmax(logits, weights):
+def weighted_softmax(logits, weights=None):
     '''
     Inputs:
     logits: (batch_size, max_num_elements), FloatTensor
@@ -294,7 +294,7 @@ def weighted_softmax(logits, weights):
     Computes:
     p[i] = (w[i] * exp(l[i])) / sum(w[j] * exp(l[j]))
     '''
-    wl = T.exp(logits - logits.max(1, keepdim=True)[0]) * weights
+    wl = T.exp(logits - logits.max(1, keepdim=True)[0]) * (weights if weights is not None else 1)
     wl = wl / (wl.sum(1)+1e-8).unsqueeze(1)
     return wl
 
