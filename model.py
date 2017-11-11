@@ -1136,6 +1136,9 @@ log_train = logdirs(args.logdir, modelnamesave)
 
 train_writer = TF.summary.FileWriter(log_train)
 
+adv_min_itr = 1000
+
+
 vcb = dataset.vocab
 usrs = dataset.users
 num_usrs = len(usrs)
@@ -1217,6 +1220,10 @@ while True:
         '''
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
+        if sentence_lengths_padded.size(1) < 2:
+            continue
+        if wds > max_wds * .8:
+            continue
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
         speaker_padded = tovar(speaker_padded)
@@ -1240,7 +1247,7 @@ while True:
 
         # The idea is to fix the word embedding and user embedding once for a while,
         # and train the rest of the network using adversarial sampling.
-        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > 1000:
+        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
                size_wd,batch_size,size_usr,
@@ -1265,7 +1272,7 @@ while True:
         assert np.all(~np.isnan(tonumpy(encodings)))
         assert np.all(~np.isnan(tonumpy(wds_h)))
         # Do the same for word-embedding, user-embedding, and encoder network
-        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > 1000:
+        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
@@ -1279,7 +1286,7 @@ while True:
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
 
         # Do the same for everything except the decoder
-        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > 1000:
+        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
                       wds_b,usrs_b,words_padded, decoder,
@@ -1340,17 +1347,17 @@ while True:
         assert np.all(~np.isnan(tonumpy(reg)))
 
         # Tensorboard viz start...
-        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > 1000:
+        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > adv_min_itr:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
-        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > 1000:
+        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
             adv_sent_diffs.append(loss_adv - loss)
             adv_sent_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
-        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > 1000:
+        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
             adv_ctx_diffs.append(loss_adv - loss)
             adv_ctx_scales.append(scale)
             train_writer.add_summary(
