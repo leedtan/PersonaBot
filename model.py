@@ -48,7 +48,7 @@ class Encoder(NN.Module):
     @wds_h: Annotation vectors for each word
         3D (max_words, n_sentences, output_size)
     '''
-    def __init__(self,size_usr, size_wd, output_size, num_layers):
+    def __init__(self,size_usr, size_wd, output_size, num_layers, non_linearities=1):
         NN.Module.__init__(self)
         self._output_size = output_size
         self._size_wd = size_wd
@@ -90,7 +90,7 @@ class Encoder(NN.Module):
         return h[:, -2:].contiguous().view(batch_size, output_size), embed
 
 class Context(NN.Module):
-    def __init__(self,in_size, context_size, size_attn, num_layers=1):
+    def __init__(self,in_size, context_size, size_attn, num_layers=1, non_linearities=1):
         NN.Module.__init__(self)
         self._context_size = context_size
         self._in_size = in_size
@@ -102,9 +102,9 @@ class Context(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        self.attn_ctx = SelfAttention(size_context, size_context, size_attn)
-        self.attn_wd = WdAttention(size_sentence, size_context, size_attn)
-        self.attn_sent = RolledUpAttention(size_attn, size_context, size_attn)
+        self.attn_ctx = SelfAttention(size_context, size_context, size_attn, non_linearities = non_linearities)
+        self.attn_wd = WdAttention(size_sentence, size_context, size_attn, non_linearities = non_linearities)
+        self.attn_sent = RolledUpAttention(size_attn, size_context, size_attn, non_linearities = non_linearities)
         init_weights(self.attn_ctx)
         init_weights(self.attn_wd)
         init_weights(self.attn_sent)
@@ -192,29 +192,42 @@ class Attention(NN.Module):
     Attention head: the one we are attending with
     Context: the one we are attending on
     '''
-    def __init__(self, size_context, size_head, size_attn, num_layers = 1):
+    def __init__(self, size_context, size_head, size_attn, num_layers = 1, non_linearities=1):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._size_attn = size_attn
         self._num_layers = num_layers
         self.softmax = NN.Softmax()
         # Context projector
-        self.F_ctx = NN.Sequential(
-            NN.Linear(size_context, size_attn*2),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn*2, size_attn))
-        # Attendee projector
-        self.F_head = NN.Sequential(
-            NN.Linear(size_head, size_attn*2),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn*2, size_attn))
-        # Takes in context and attendee and produces a weight
-        self.F_attn = NN.Sequential(
-            NN.Linear(size_attn*2, size_attn),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn, size_attn),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn, 1))
+        if non_linearities == 1:
+            self.F_ctx = NN.Sequential(
+                NN.Linear(size_context, size_attn*2 * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn*2 * args.hidden_width, size_attn))
+            # Attendee projector
+            self.F_head = NN.Sequential(
+                NN.Linear(size_head, size_attn*2 * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn*2 * args.hidden_width, size_attn))
+            # Takes in context and attendee and produces a weight
+            self.F_attn = NN.Sequential(
+                NN.Linear(size_attn*2, size_attn * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn * args.hidden_width, size_attn * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn * args.hidden_width, 1))
+        else:
+            self.F_ctx = NN.Sequential(
+                NN.Linear(size_context, size_attn))
+            # Attendee projector
+            self.F_head = NN.Sequential(
+                NN.Linear(size_head, size_attn))
+            # Takes in context and attendee and produces a weight
+            self.F_attn = NN.Sequential(
+                NN.Linear(size_attn*2, size_attn),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn, 1))
+            
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
@@ -227,29 +240,41 @@ class SelfAttention(Attention):
     @heads: (batch_size, num_turns_head, size_head)
     @mask: (batch_size, num_turns_head, num_turns_context)
     '''
-    def __init__(self, size_context, size_head, size_attn, num_layers = 1):
+    def __init__(self, size_context, size_head, size_attn, num_layers = 1, non_linearities=1):
         NN.Module.__init__(self)
         self._size_context = size_context
         self._size_attn = size_attn
         self._num_layers = num_layers
         self.softmax = NN.Softmax()
         # Context projector
-        self.F_ctx = NN.Sequential(
-            NN.Linear(size_context, size_attn*2),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn*2, size_context))
-        # Attendee projector
-        self.F_head = NN.Sequential(
-            NN.Linear(size_head, size_attn*2),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn*2, size_attn))
-        # Takes in context and attendee and produces a weight
-        self.F_attn = NN.Sequential(
-            NN.Linear(size_attn + size_context, size_attn),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn, size_attn),
-            NN.LeakyReLU(),
-            NN.Linear(size_attn, 1))
+        if non_linearities == 1:
+            self.F_ctx = NN.Sequential(
+                NN.Linear(size_context, size_attn*2 * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn*2 * args.hidden_width, size_context))
+            # Attendee projector
+            self.F_head = NN.Sequential(
+                NN.Linear(size_head, size_attn*2 * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn*2 * args.hidden_width, size_attn))
+            # Takes in context and attendee and produces a weight
+            self.F_attn = NN.Sequential(
+                NN.Linear(size_attn + size_context, size_attn * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn * args.hidden_width, size_attn * args.hidden_width),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn * args.hidden_width, 1))
+        else:
+            self.F_ctx = NN.Sequential(
+                NN.Linear(size_context, size_context))
+            # Attendee projector
+            self.F_head = NN.Sequential(
+                NN.Linear(size_head, size_attn))
+            # Takes in context and attendee and produces a weight
+            self.F_attn = NN.Sequential(
+                NN.Linear(size_attn + size_context, size_attn),
+                NN.LeakyReLU(),
+                NN.Linear(size_attn, 1))
         init_weights(self.F_head)
         init_weights(self.F_ctx)
         init_weights(self.F_attn)
@@ -501,7 +526,7 @@ class AttentionDecoderCtx(Attention):
         
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, size_attn, num_words, max_len_generated ,beam_size,
-                 state_size = None, num_layers=1):
+                 state_size = None, num_layers=1, non_linearities=1):
         NN.Module.__init__(self)
         self._num_words = num_words
         self._beam_size = beam_size
@@ -518,16 +543,36 @@ class Decoder(NN.Module):
         if state_size == None:
             state_size = in_size
         self._state_size = state_size
-        self.F_init_h = NN.Sequential(
-                NN.Linear(init_size, state_size * num_layers),
+        decoder_out_size = state_size + size_attn*2
+        if non_linearities == 1:
+            self.F_init_h = NN.Sequential(
+                    NN.Linear(init_size, state_size * num_layers * args.hidden_width),
+                    NN.LeakyReLU(),
+                    NN.Linear(state_size * num_layers * args.hidden_width, state_size * num_layers),
+                    NN.Tanh()
+                    )
+            self.F_init_c = NN.Sequential(
+                    NN.Linear(init_size, state_size * num_layers * args.hidden_width),
+                    NN.LeakyReLU(),
+                    NN.Linear(state_size * num_layers * args.hidden_width, state_size * num_layers)
+                    )
+            self.F_reconstruct = NN.Sequential(
+                NN.Linear(decoder_out_size, decoder_out_size//2 * args.hidden_width),
                 NN.LeakyReLU(),
-                NN.Linear(state_size * num_layers, state_size * num_layers),
-                NN.Tanh()
+                NN.Linear(decoder_out_size//2 * args.hidden_width, size_wd)
                 )
-        self.F_init_c = NN.Sequential(
-                NN.Linear(init_size, state_size * num_layers),
+        else:
+            self.F_init_h = NN.Sequential(
+                    NN.Linear(init_size,  state_size * num_layers),
+                    NN.Tanh()
+                    )
+            self.F_init_c = NN.Sequential(
+                    NN.Linear(init_size,  state_size * num_layers)
+                    )
+            self.F_reconstruct = NN.Sequential(
+                NN.Linear(decoder_out_size, decoder_out_size//2),
                 NN.LeakyReLU(),
-                NN.Linear(state_size * num_layers, state_size * num_layers)
+                NN.Linear(decoder_out_size//2, size_wd)
                 )
         '''
         self.F_in = NN.Sequential(
@@ -543,18 +588,14 @@ class Decoder(NN.Module):
                 num_layers,
                 bidirectional=False,
                 )
-        decoder_out_size = state_size + size_attn*2
-        self.F_reconstruct = NN.Sequential(
-            NN.Linear(decoder_out_size, decoder_out_size//2),
-            NN.LeakyReLU(),
-            NN.Linear(decoder_out_size//2, size_wd)
-            )
         init_weights(self.F_reconstruct)
         self.softmax = HierarchicalLogSoftmax(decoder_out_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
-        self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size, size_attn)
+        self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size, size_attn,
+                                               non_linearities = non_linearities)
         self.AttentionDecoderCtx = AttentionDecoderCtx(
-                size_context + size_attn + size_usr, state_size + size_attn, size_attn)
+                size_context + size_attn + size_usr, state_size + size_attn, size_attn,
+                non_linearities = non_linearities)
         init_weights(self.SeltAttentionWd)
         init_weights(self.AttentionDecoderCtx)
 
@@ -1003,15 +1044,15 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=3)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=128)
-parser.add_argument('--size_sentence', type=int, default=64)
+parser.add_argument('--size_context', type=int, default=256)
+parser.add_argument('--size_sentence', type=int, default=128)
 parser.add_argument('--size_attn', type=int, default=64)
-parser.add_argument('--decoder_size_sentence', type=int, default=256)
+parser.add_argument('--decoder_size_sentence', type=int, default=512)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=30)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=2)
+parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=2e-3)
 parser.add_argument('--modelname', type=str, default = '')
@@ -1027,6 +1068,8 @@ parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
+parser.add_argument('--non_linearities', type=int, default=1)
+parser.add_argument('--hidden_width', type=int, default=1)
 args = parser.parse_args()
 
 datasets = []
@@ -1112,13 +1155,14 @@ word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0, scale_grad_by_
 # If you want to preprocess other glove embeddings.
 # preprocess_glove(args.gloveroot, 100)
 word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
-enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers))
+enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers,
+                   non_linearities = args.non_linearities))
 context = cuda(Context(size_sentence, size_context, size_attn,
-               num_layers = args.context_layers))
+               num_layers = args.context_layers, non_linearities = args.non_linearities))
 decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn, num_words+1,
                decoder_max_generated, decoder_beam_size, 
                state_size=decoder_size_sentence, 
-               num_layers = args.decoder_layers))
+               num_layers = args.decoder_layers, non_linearities = args.non_linearities))
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 named_params = sum([list(m.named_parameters())
     for m in [user_emb, word_emb, enc, context, decoder]], [])
