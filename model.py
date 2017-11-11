@@ -1220,9 +1220,11 @@ while True:
         '''
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
+        wds = sentence_lengths_padded.sum()
+        max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
         if sentence_lengths_padded.size(1) < 2:
             continue
-        if wds > max_wds * .8:
+        if wds > max_wds * .8 or wds < max_wds * .05:
             continue
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
