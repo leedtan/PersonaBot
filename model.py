@@ -1044,15 +1044,15 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=3)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=24)
-parser.add_argument('--size_sentence', type=int, default=48)
+parser.add_argument('--size_context', type=int, default=256)
+parser.add_argument('--size_sentence', type=int, default=128)
 parser.add_argument('--size_attn', type=int, default=64)
-parser.add_argument('--decoder_size_sentence', type=int, default=12)
+parser.add_argument('--decoder_size_sentence', type=int, default=512)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=30)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=2)
+parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=2e-3)
 parser.add_argument('--modelname', type=str, default = '')
@@ -1060,7 +1060,7 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
-parser.add_argument('--max_turns_allowed', type=int, default=6)
+parser.add_argument('--max_turns_allowed', type=int, default=8)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -1136,7 +1136,7 @@ log_train = logdirs(args.logdir, modelnamesave)
 
 train_writer = TF.summary.FileWriter(log_train)
 
-adv_min_itr = 10
+adv_min_itr = 1000
 
 
 vcb = dataset.vocab
