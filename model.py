@@ -1044,15 +1044,15 @@ parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=3)
 parser.add_argument('--decoder_layers', type=int, default=1)
 parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=256)
-parser.add_argument('--size_sentence', type=int, default=128)
+parser.add_argument('--size_context', type=int, default=24)
+parser.add_argument('--size_sentence', type=int, default=48)
 parser.add_argument('--size_attn', type=int, default=64)
-parser.add_argument('--decoder_size_sentence', type=int, default=512)
+parser.add_argument('--decoder_size_sentence', type=int, default=12)
 parser.add_argument('--decoder_beam_size', type=int, default=4)
 parser.add_argument('--decoder_max_generated', type=int, default=30)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
-parser.add_argument('--batchsize', type=int, default=1)
+parser.add_argument('--batchsize', type=int, default=2)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=2e-3)
 parser.add_argument('--modelname', type=str, default = '')
@@ -1060,7 +1060,7 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
-parser.add_argument('--max_turns_allowed', type=int, default=8)
+parser.add_argument('--max_turns_allowed', type=int, default=6)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -1136,7 +1136,7 @@ log_train = logdirs(args.logdir, modelnamesave)
 
 train_writer = TF.summary.FileWriter(log_train)
 
-adv_min_itr = 1000
+adv_min_itr = 10
 
 
 vcb = dataset.vocab
@@ -1186,7 +1186,7 @@ loss_nan = reg_nan = grad_nan = 0
 
 itr = args.loaditerations
 epoch = 0
-usr_std = wd_std = sent_std = ctx_std = 1e-7
+usr_std = wd_std = sent_std = ctx_std = wds_h_std = 1e-7
 adv_emb_diffs = []
 adv_sent_diffs = []
 adv_ctx_diffs = []
@@ -1276,14 +1276,15 @@ while True:
         # Do the same for word-embedding, user-embedding, and encoder network
         if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
-            wds_adv, usrs_adv, enc_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
+            wds_adv, usrs_adv, enc_adv, wds_h_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
                     wds_b,usrs_b,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std, wds_h, scale=scale, style=adv_style)
+                    usr_std, wd_std, sent_std, wds_h, wds_h_std, scale=scale, style=adv_style)
             wds_b = tovar((wds_b + tovar(wds_adv)).data)
             usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
-
+            wds_h = tovar((wds_h + tovar(wds_h_adv).view_as(wds_h)).data)
+            
         encodings = encodings.view(batch_size, max_turns, -1)
         ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
 
@@ -1370,14 +1371,18 @@ while True:
         usrs_dist = usrs_b * mask
         mask = mask_3d(encodings.size(), turns)
         sent_dist = encodings * mask
+        wds_h_mask = wds_h.view(wds_h.size(0), args.batchsize, -1, wds_h.size(2)).permute(1,2,0,3)
+        mask = mask_4d(wds_h_mask.size(), turns , sentence_lengths_padded)
+        wds_h_dist = wds_h_mask * mask
         mask = mask_3d(ctx.size(), turns)
         ctx_dist = ctx * mask
-        wds_dist, usrs_dist, sent_dist, ctx_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist)
+        wds_dist, usrs_dist, sent_dist, ctx_dist, wds_h_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist, wds_h_dist)
 
         wd_std = float(np.nanstd(wds_dist))
         usr_std = float(np.nanstd(usrs_dist))
         sent_std = float(np.nanstd(sent_dist))
         ctx_std = float(np.nanstd(ctx_dist))
+        wds_h_std = float(np.nanstd(wds_h_dist))
         train_writer.add_summary(
                 TF.Summary(
                     value=[
@@ -1392,6 +1397,7 @@ while True:
                         TF.Summary.Value(tag='usr_std', simple_value=usr_std),
                         TF.Summary.Value(tag='sent_std', simple_value=sent_std),
                         TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
+                        TF.Summary.Value(tag='wds_h_std', simple_value=wds_h_std),
                         
                         ]
                     ),
