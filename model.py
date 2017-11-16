@@ -1068,8 +1068,10 @@ parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
+parser.add_argument('--lambda_repetitive', type=float, default=1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
+
 args = parser.parse_args()
 
 datasets = []
@@ -1502,7 +1504,7 @@ while True:
             total_words = sum(batch_words.values())
             for r in range(hypothesis.shape[0]):
                 for c in range(1,hypothesis.shape[1]):
-                    reward[r,c-1] -= (batch_words[hypothesis[r,c]]/total_words)**2
+                    reward[r,c-1] -= (batch_words[hypothesis[r,c]]/total_words)**2 * args.lambda_repetitive
             assert np.all(~np.isnan(reward))
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
