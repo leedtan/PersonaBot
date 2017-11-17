@@ -582,6 +582,14 @@ class Decoder(NN.Module):
             )
         init_weights(self.F_in)
         '''
+        
+        self.F_output = NN.Sequential(
+            NN.Linear(decoder_out_size, decoder_out_size * args.hidden_width),
+            NN.LeakyReLU(),
+            NN.Linear(decoder_out_size * args.hidden_width, decoder_out_size * args.hidden_width),
+            NN.LeakyReLU(),
+            NN.Linear(decoder_out_size * args.hidden_width, decoder_out_size)
+            )
         self.rnn = NN.LSTM(
                 in_size + 1,
                 state_size,
@@ -589,6 +597,7 @@ class Decoder(NN.Module):
                 bidirectional=False,
                 )
         init_weights(self.F_reconstruct)
+        init_weights(self.F_output)
         self.softmax = HierarchicalLogSoftmax(decoder_out_size, np.int(np.sqrt(num_words)), num_words)
         init_lstm(self.rnn)
         self.SeltAttentionWd = SeltAttentionWd(state_size + size_wd, state_size, size_attn,
@@ -706,14 +715,15 @@ class Decoder(NN.Module):
         attn = self.AttentionDecoderCtx(ctx_for_attn, embed, ctx_mask)
         self.attn2 = attn
         embed = T.cat((embed, attn),3)
-
+        embed = embed.view(-1, state_size + size_attn * 2)
+        embed = self.F_output(embed)
         if wd_target is None:
-            out = self.softmax(embed.view(-1, state_size + size_attn * 2))
+            out = self.softmax(embed)
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
             log_prob = None
         else:
             target = T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            decoder_out = embed.view(-1, state_size + size_attn + size_attn)
+            decoder_out = embed
             out = self.softmax(decoder_out, target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
@@ -867,6 +877,7 @@ class Decoder(NN.Module):
         
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
         embed = embed.view(num_sentences_parallel, state_size + size_attn + size_attn).contiguous()
+        embed = self.F_output(embed)
         out = self.softmax(embed)
         #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
@@ -1068,7 +1079,7 @@ parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
-parser.add_argument('--lambda_repetitive', type=float, default=1)
+parser.add_argument('--lambda_repetitive', type=float, default=.1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
 
