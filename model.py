@@ -35,6 +35,50 @@ from data_loader_stage1 import *
 from adv import *
 #from test import test
 
+
+'''
+class Residual(NN.Module):
+    def __init__(self,size, relu = True):
+        NN.Module.__init__(self)
+        self.size = size
+        self.linear = NN.Linear(size, size)
+        if relu:
+            self.relu = NN.LeakyReLU()
+        else:
+            self.relu = False
+
+    def forward(self, x):
+        if self.relu:
+            return self.relu(self.linear(x) + x)
+        else:
+            return self.linear(x) + x
+'''
+class Residual(NN.Module):
+    def __init__(self,size, hidden):
+        NN.Module.__init__(self)
+        self.size = size
+        self.linear1 = NN.Linear(size, hidden)
+        self.linear2 = NN.Linear(hidden, size)
+        self.relu = NN.LeakyReLU()
+
+    def forward(self, x):
+        h = self.relu(self.linear1(x))
+        h = self.linear2(h)
+        return self.relu(x + h)
+class Dense(NN.Module):
+    def __init__(self,size, hidden):
+        NN.Module.__init__(self)
+        self.size = size
+        self.linear1 = NN.Linear(size, hidden)
+        self.linear2 = NN.Linear(hidden, hidden)
+        self.relu = NN.LeakyReLU()
+
+    def forward(self, x):
+        h = self.relu(self.linear1(x))
+        h = self.linear2(h)
+        return T.cat((x, self.relu(h)),1)
+
+
 class Encoder(NN.Module):
     '''
     Inputs:
@@ -584,11 +628,14 @@ class Decoder(NN.Module):
         '''
         
         self.F_output = NN.Sequential(
-            NN.Linear(decoder_out_size, decoder_out_size * args.hidden_width),
-            NN.LeakyReLU(),
-            NN.Linear(decoder_out_size * args.hidden_width, decoder_out_size * args.hidden_width),
-            NN.LeakyReLU(),
-            NN.Linear(decoder_out_size * args.hidden_width, decoder_out_size)
+            Residual(decoder_out_size, decoder_out_size//2),
+            Residual(decoder_out_size, decoder_out_size//2),
+            Dense(decoder_out_size, decoder_out_size),
+            Residual(decoder_out_size*2, decoder_out_size),
+            Dense(decoder_out_size*2, decoder_out_size),
+            Residual(decoder_out_size*3, decoder_out_size),
+            Dense(decoder_out_size*3, decoder_out_size),
+            NN.Linear(decoder_out_size * 4, decoder_out_size)
             )
         self.rnn = NN.LSTM(
                 in_size + 1,
@@ -613,7 +660,7 @@ class Decoder(NN.Module):
         lstm_h = lstm_h.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
         lstm_c = self.F_init_c(ctx.view(batch_size, -1))
         lstm_c = lstm_c.view(batch_size, self._num_layers, self._state_size).permute(1, 0, 2)
-        initial_state = (lstm_h, lstm_c)
+        initial_state = (lstm_h.contiguous(), lstm_c.contiguous())
         return initial_state
 
     def forward(self, context_encodings, wd_emb, usr_emb, sentence_lengths_padded, 
@@ -747,7 +794,6 @@ class Decoder(NN.Module):
 
     def get_n_best_next_words(self, embed_seq, current_state, n=1):
         """
-
         :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
         :param current_state: num_layers * num_directions x batch_size x hidden_size
         :param n: int, return top n words.
@@ -769,7 +815,6 @@ class Decoder(NN.Module):
         return val, indexes, current_state
     def mat_idx_vector_to_vector(self, mat, vec):
         """
-
         :param mat: a matrix of size l lines x m cols
         :param vec: vector of size l
         :return: vector made of M[i, l[i]] i in [1,l]
@@ -1079,7 +1124,7 @@ parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
-parser.add_argument('--lambda_repetitive', type=float, default=.1)
+parser.add_argument('--lambda_repetitive', type=float, default=.3)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
 
