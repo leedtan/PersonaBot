@@ -1125,6 +1125,7 @@ parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
 parser.add_argument('--lambda_repetitive', type=float, default=.3)
+parser.add_argument('--lambda_reconstruct', type=float, default=1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
 parser.add_argument('--server', type=int, default=0)
@@ -1134,6 +1135,7 @@ if args.server == 1:
     args.dataroot = '/misc/vlgscratch4/ChoGroup/gq/data/OpenSubtitles/OpenSubtitles-dialogs/'
     args.metaroot = 'opensub'
     args.logdir = '/home/qg323/lee'
+print(args)
 
 datasets = []
 dataloaders = []
@@ -1370,7 +1372,7 @@ while True:
 
         # Training with PPL
         loss = -log_prob
-        reg = reconstruct_loss_mean*1e-2
+        reg = reconstruct_loss_mean*1e-2 * args.lambda_reconstruct
         opt.zero_grad()
         loss.backward(retain_graph=True)
         # Record gradients from PPL
