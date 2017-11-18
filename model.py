@@ -1127,8 +1127,13 @@ parser.add_argument('--lambda_pg', type=float, default=.1)
 parser.add_argument('--lambda_repetitive', type=float, default=.3)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
+parser.add_argument('--server', type=int, default=0)
 
 args = parser.parse_args()
+if args.server == 1:
+    args.dataroot = '/misc/vlgscratch4/ChoGroup/gq/data/OpenSubtitles/OpenSubtitles-dialogs/'
+    args.metaroot = 'opensub'
+    args.logdir = '/home/qg323/lee'
 
 datasets = []
 dataloaders = []
@@ -1180,10 +1185,7 @@ def logdirs(logdir, modelnamesave):
     if not os.path.exists(logdir):
         os.mkdir(logdir)
     logdir = (
-            logdir + '/%s-%s' % 
-            (modelnamesave, datetime.datetime.strftime(
-                datetime.datetime.now(), '%Y%m%d%H%M%S')
-                )
+            logdir + modelnamesave
             )
     if not os.path.exists(logdir):
         os.mkdir(logdir)
