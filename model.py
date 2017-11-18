@@ -1537,6 +1537,7 @@ while True:
             real_sent = []
             gen_sent = []
             BLEUscores = []
+            BLEUscoresplot = []
             lengths_gen = []
             batch_words = Counter()
             smoother = bleu_score.SmoothingFunction()
@@ -1552,6 +1553,7 @@ while True:
                 batch_words.update(gen_sent[-1][1:])
                 curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
+                BLEUscoresplot.append(curr_bleu)
                 curr_bleu += num_words / (1+np.sqrt(itr))
                 
                 #curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
@@ -1580,7 +1582,7 @@ while True:
             train_writer.add_summary(
                     TF.Summary(
                         value=[
-                            TF.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscores)),
+                            TF.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscoresplot)),
                             TF.Summary.Value(tag='pg_grad_norm', simple_value=pg_grad_norm),
                             ]
                         ),
