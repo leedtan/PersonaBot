@@ -83,6 +83,7 @@ class Context(NN.Module):
         self._in_size = in_size
         self._num_layers = num_layers
         self._attention_enabled = attention_enabled
+        self.context_attn_plot_path = "plot/context_attn_%d.png"
 
         self.rnn = NN.LSTM(
                 in_size,
@@ -118,7 +119,7 @@ class Context(NN.Module):
         return initial_state
 
     def forward(self, sent_encs, length, sentence_lengths_padded,
-                wds_h, usrs_b, initial_state=None):
+                wds_h, usrs_b, plot=False, sentence_string=None, initial_state=None):
             # attn: batch_size, max_turns, sentence_encoding_size
         sent_encs = cuda(sent_encs)
         length = cuda(length)
@@ -135,7 +136,9 @@ class Context(NN.Module):
         embed = cuda(embed.permute(1,0,2).contiguous())
         # embed is now: batch_size, max_turns, context_size
         if self._attention_enabled:
-            attn = self.attention(embed, length)
+            attn, attn_weight = self.attention(embed, length)
+            if plot:
+                plot_attention(attn_weight=attn_weight, attended_over=sentence_string, print_path=self.context_attn_plot_path)
             #ctx is batchsize, num_turns decode, size_context + size_sentence
             #wds_h maximum words in batch (real), batch_size * maximum turns in sample, size_sentence
             ctx = T.cat((embed, attn),2)
@@ -291,10 +294,10 @@ class Attention(NN.Module):
                 attn_raw.view(batch_size * num_turns, num_turns),
                 mask.view(batch_size*num_turns, num_turns)).view(
                         batch_size, num_turns, num_turns, 1)
+
         at_weighted_sent = attn_raw * ctx_to_attend 
         at_weighted_sent = at_weighted_sent.sum(2)
-        
-        return at_weighted_sent
+        return at_weighted_sent, attn_raw
 
 class Decoder(NN.Module):
     def __init__(self,size_usr, size_wd, context_size, size_sentence, num_words, max_len_generated ,beam_size,
@@ -383,7 +386,7 @@ class Decoder(NN.Module):
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous()
         
-        attn = self.attention(embed, length.contiguous().view(-1))
+        attn, attn_weight = self.attention(embed, length.contiguous().view(-1))
         
         embed = T.cat((embed, attn),2)
         embed = embed.view(batch_size, maxlenbatch, maxwordsmessage, state_size*2)
@@ -427,6 +430,7 @@ class Decoder(NN.Module):
         out = self.softmax(embed.squeeze())
         val, indexes = out.topk(n, 1)
         return val, indexes, current_state
+
     def get_next_word(self, embed_seq, init_state):
         """
 
@@ -664,6 +668,11 @@ try:
 except:
     pass
 
+try:
+    os.mkdir("plot")
+except:
+    pass
+
 if len(args.modelname) > 0:
     modelnamesave = args.modelname
     modelnameload = None
@@ -751,6 +760,7 @@ while True:
         itr += 1
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
+        batch_word_str = batch_to_string_sentence(words_padded, sentence_lengths_padded, dataset)
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
         speaker_padded = tovar(speaker_padded)
@@ -794,7 +804,7 @@ while True:
             encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
         encodings = encodings.view(batch_size, max_turns, -1)
         #attn = attention(encodings)
-        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b, plot=True, sentence_string=batch_word_str)
         if itr % 10 == 7 and args.adversarial_sample == 1:
             scale = float(np.exp(-np.random.uniform(5, 6)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
