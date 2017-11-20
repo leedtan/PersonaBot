@@ -632,7 +632,9 @@ class Decoder(NN.Module):
             Dense(decoder_out_size, decoder_out_size),
             Residual(decoder_out_size*2, decoder_out_size),
             Dense(decoder_out_size*2, decoder_out_size),
-            NN.Linear(decoder_out_size * 3, decoder_out_size)
+            Residual(decoder_out_size*3, decoder_out_size),
+            Dense(decoder_out_size*3, decoder_out_size),
+            NN.Linear(decoder_out_size * 4, decoder_out_size)
             )
         self.rnn = NN.LSTM(
                 in_size + 1,
@@ -1283,7 +1285,7 @@ while True:
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
         if sentence_lengths_padded.size(1) < 2:
             continue
-        if wds > max_wds * .6 or wds < max_wds * .05:
+        if wds > max_wds * .8 or wds < max_wds * .05:
             continue
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
