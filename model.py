@@ -1448,7 +1448,7 @@ while True:
         train_writer.add_summary(
                 TF.Summary(
                     value=[
-                        TF.Summary.Value(tag='perplexity', simple_value=np.exp(tonumpy(loss))),
+                        TF.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((10, tonumpy(loss))))),
                         TF.Summary.Value(tag='loss', simple_value=loss),
                         TF.Summary.Value(tag='reg', simple_value=reg),
                         TF.Summary.Value(tag='time_train', simple_value=time_train),
@@ -1652,7 +1652,7 @@ while True:
             T.save(context, '%s-context-%08d' % (modelnamesave, itr))
             T.save(decoder, '%s-decoder-%08d' % (modelnamesave, itr))
         if itr % 10 == 0:
-            print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(tonumpy(loss)))
+            print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(np.min((10, tonumpy(loss)))))
 
     
     # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
