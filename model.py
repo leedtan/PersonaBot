@@ -588,6 +588,7 @@ class Decoder(NN.Module):
             state_size = in_size
         self._state_size = state_size
         decoder_out_size = state_size + size_attn*2
+        f_out_size = decoder_out_size + size_wd
         if non_linearities == 1:
             self.F_init_h = NN.Sequential(
                     NN.Linear(init_size, state_size * num_layers * args.hidden_width),
@@ -628,13 +629,13 @@ class Decoder(NN.Module):
         '''
         
         self.F_output = NN.Sequential(
-            Residual(decoder_out_size, decoder_out_size//2),
-            Dense(decoder_out_size, decoder_out_size),
-            Residual(decoder_out_size*2, decoder_out_size),
-            Dense(decoder_out_size*2, decoder_out_size),
-            Residual(decoder_out_size*3, decoder_out_size),
-            Dense(decoder_out_size*3, decoder_out_size),
-            NN.Linear(decoder_out_size * 4, decoder_out_size)
+            Residual(f_out_size, f_out_size//2),
+            Dense(f_out_size, f_out_size),
+            Residual(f_out_size*2, f_out_size),
+            Dense(f_out_size*2, f_out_size),
+            Residual(f_out_size*3, f_out_size),
+            Dense(f_out_size*3, f_out_size),
+            NN.Linear(f_out_size * 4, decoder_out_size)
             )
         self.rnn = NN.LSTM(
                 in_size + 1,
@@ -762,7 +763,10 @@ class Decoder(NN.Module):
         self.attn2 = attn
         embed = T.cat((embed, attn),3)
         embed = embed.view(-1, state_size + size_attn * 2)
+        reconstruct = self.F_reconstruct(embed)
+        embed = T.cat((embed, reconstruct),1)
         embed = self.F_output(embed)
+        
         if wd_target is None:
             out = self.softmax(embed)
             out = out.view(batch_size, maxlenbatch, -1, self._num_words)
@@ -777,7 +781,6 @@ class Decoder(NN.Module):
             log_prob = out.sum() / mask.sum()
             if wds_b_reconstruct is not None:
                 
-                reconstruct = self.F_reconstruct(decoder_out)
                 reconstruct_loss = ((reconstruct.view(
                         batch_size, maxlenbatch, maxwordsmessage, size_wd)
                             - wds_b_reconstruct.detach()) ** 2) * mask.unsqueeze(-1)
@@ -921,6 +924,8 @@ class Decoder(NN.Module):
         
         #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
         embed = embed.view(num_sentences_parallel, state_size + size_attn + size_attn).contiguous()
+        reconstruct = self.F_reconstruct(embed)
+        embed = T.cat((embed, reconstruct),1)
         embed = self.F_output(embed)
         out = self.softmax(embed)
         #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
@@ -1124,7 +1129,7 @@ parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.1)
 parser.add_argument('--lambda_repetitive', type=float, default=.3)
-parser.add_argument('--lambda_reconstruct', type=float, default=1)
+parser.add_argument('--lambda_reconstruct', type=float, default=.1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
 parser.add_argument('--server', type=int, default=0)
@@ -1133,7 +1138,7 @@ args = parser.parse_args()
 if args.server == 1:
     args.dataroot = '/misc/vlgscratch4/ChoGroup/gq/data/OpenSubtitles/OpenSubtitles-dialogs/'
     args.metaroot = 'opensub'
-    args.logdir = '/home/qg323/lee'
+    args.logdir = '/home/qg323/lee/'
 print(args)
 
 datasets = []
@@ -1444,26 +1449,27 @@ while True:
         sent_std = float(np.nanstd(sent_dist))
         ctx_std = float(np.nanstd(ctx_dist))
         wds_h_std = float(np.nanstd(wds_h_dist))
-        train_writer.add_summary(
-                TF.Summary(
-                    value=[
-                        TF.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((10, tonumpy(loss))))),
-                        TF.Summary.Value(tag='loss', simple_value=loss),
-                        TF.Summary.Value(tag='reg', simple_value=reg),
-                        TF.Summary.Value(tag='time_train', simple_value=time_train),
-                        TF.Summary.Value(tag='time_decode', simple_value=time_decode),
-                        TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                        TF.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
-                        TF.Summary.Value(tag='wd_std', simple_value=wd_std),
-                        TF.Summary.Value(tag='usr_std', simple_value=usr_std),
-                        TF.Summary.Value(tag='sent_std', simple_value=sent_std),
-                        TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
-                        TF.Summary.Value(tag='wds_h_std', simple_value=wds_h_std),
-                        
-                        ]
-                    ),
-                itr
-                )
+        if itr % 11 == 0:
+            train_writer.add_summary(
+                    TF.Summary(
+                        value=[
+                            TF.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((8, tonumpy(loss))))),
+                            TF.Summary.Value(tag='loss', simple_value=loss),
+                            TF.Summary.Value(tag='reg', simple_value=reg),
+                            TF.Summary.Value(tag='time_train', simple_value=time_train),
+                            TF.Summary.Value(tag='time_decode', simple_value=time_decode),
+                            TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                            TF.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
+                            TF.Summary.Value(tag='wd_std', simple_value=wd_std),
+                            TF.Summary.Value(tag='usr_std', simple_value=usr_std),
+                            TF.Summary.Value(tag='sent_std', simple_value=sent_std),
+                            TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
+                            TF.Summary.Value(tag='wds_h_std', simple_value=wds_h_std),
+                            
+                            ]
+                        ),
+                    itr
+                    )
         time_train += time.time() - start_train
         if itr % scatter_entropy_freq == 0:
             prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:].contiguous(),
