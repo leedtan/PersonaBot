@@ -1449,7 +1449,7 @@ while True:
         sent_std = float(np.nanstd(sent_dist))
         ctx_std = float(np.nanstd(ctx_dist))
         wds_h_std = float(np.nanstd(wds_h_dist))
-        if itr % 11 == 0:
+        if itr % 10 == 0:
             train_writer.add_summary(
                     TF.Summary(
                         value=[
