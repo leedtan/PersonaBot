@@ -1103,7 +1103,7 @@ parser.add_argument('--outputdir', type=str, default ='outputs',help='output dir
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--encoder_layers', type=int, default=3)
 parser.add_argument('--decoder_layers', type=int, default=1)
-parser.add_argument('--context_layers', type=int, default=1)
+parser.add_argument('--context_layers', type=int, default=2)
 parser.add_argument('--size_context', type=int, default=256)
 parser.add_argument('--size_sentence', type=int, default=128)
 parser.add_argument('--size_attn', type=int, default=64)
