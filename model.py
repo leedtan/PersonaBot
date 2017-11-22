@@ -1114,7 +1114,7 @@ parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=5e-4)
+parser.add_argument('--lr', type=float, default=1.5e-3)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -1277,7 +1277,7 @@ while True:
         start_train = time.time()
         if itr % scatter_entropy_freq == 0:
             adv_style = 1 - adv_style
-            adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 1000))
+            adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
         itr += 1
         '''
         if itr % 100 == 0:
