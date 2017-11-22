@@ -633,9 +633,7 @@ class Decoder(NN.Module):
             Dense(f_out_size, f_out_size),
             Residual(f_out_size*2, f_out_size),
             Dense(f_out_size*2, f_out_size),
-            Residual(f_out_size*3, f_out_size),
-            Dense(f_out_size*3, f_out_size),
-            NN.Linear(f_out_size * 4, decoder_out_size)
+            NN.Linear(f_out_size * 3, decoder_out_size)
             )
         self.rnn = NN.LSTM(
                 in_size + 1,
@@ -1650,7 +1648,7 @@ while True:
         clip_grad(params, args.gradclip)
         opt.step()
         
-        if itr % 100000 == 0:
+        if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%08d' % (modelnamesave, itr))
             T.save(enc, '%s-enc-%08d' % (modelnamesave, itr))
