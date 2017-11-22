@@ -1650,7 +1650,7 @@ while True:
         clip_grad(params, args.gradclip)
         opt.step()
         
-        if itr % 10000 == 0:
+        if itr % 100000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%08d' % (modelnamesave, itr))
             T.save(enc, '%s-enc-%08d' % (modelnamesave, itr))
