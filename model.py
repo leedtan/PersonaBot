@@ -1184,6 +1184,26 @@ else:
     modelnamesave = args.modelnamesave
     modelnameload = args.modelnameload
 
+    user_emb_filename_base = '%s-user_emb' % args.modelnameload
+    dirname = os.path.dirname(user_emb_filename_base)
+    if dirname == '':
+        dirname = None
+    filename_base = os.path.basename(user_emb_filename_base)
+    candidates = [name for name in os.listdir(dirname) if name.startswith(filename_base)]
+    latest_time = 0
+    for cand in candidates:
+        mtime = os.path.getmtime(cand)
+        try:
+            loaditer = int(cand[-8:])
+        except ValueError:
+            print('Skipping %s' % cand)
+            continue
+        if mtime > latest_time:
+            latest_time = mtime
+            latest_loaditer = loaditer
+
+    args.loaditerations = latest_loaditer
+
 
 def logdirs(logdir, modelnamesave):
     if not os.path.exists(logdir):
