@@ -1250,19 +1250,6 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                decoder_max_generated, decoder_beam_size, 
                state_size=decoder_size_sentence, 
                num_layers = args.decoder_layers, non_linearities = args.non_linearities))
-params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
-named_params = sum([list(m.named_parameters())
-    for m in [user_emb, word_emb, enc, context, decoder]], [])
-
-def enable_train(sub_modules):
-    for m in sub_modules:
-        m.train()
-def enable_eval(sub_modules):
-    for m in sub_modules:
-        m.eval()
-opt = T.optim.Adam(params, lr=args.lr)
-#opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
-
 
 eos = dataset.index_word(EOS)
 
@@ -1285,6 +1272,20 @@ if modelnameload:
         enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations))
         context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations))
         decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
+
+params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
+named_params = sum([list(m.named_parameters())
+    for m in [user_emb, word_emb, enc, context, decoder]], [])
+
+def enable_train(sub_modules):
+    for m in sub_modules:
+        m.train()
+def enable_eval(sub_modules):
+    for m in sub_modules:
+        m.eval()
+opt = T.optim.Adam(params, lr=args.lr)
+#opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
+
 adv_style = 0
 scatter_entropy_freq = 200
 time_train = 0
