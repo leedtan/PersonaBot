@@ -10,4 +10,4 @@
 module purge
 module load python-3.5 cuda-8.0
 
-USE_CUDA=1 python3 -u model.py --modelnameload c_rep --server 1 --lambda_repetitive .1 --loaditerations 120000
+USE_CUDA=1 python3 -u model.py --modelnamesave c_rep --modelnameload c_rep --server 1 --lambda_repetitive .1

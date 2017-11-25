@@ -10,4 +10,4 @@
 module purge
 module load python-3.5 cuda-8.0
 
-USE_CUDA=1 python3 -u model.py --modelnameload c_rec --server 1 --lambda_reconstruct 0 --loaditerations 120000
+USE_CUDA=1 python3 -u model.py --modelnameload c_rec --modelnamesave c_rec --server 1 --lambda_reconstruct 0

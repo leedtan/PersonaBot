@@ -10,4 +10,4 @@
 module purge
 module load python-3.5 cuda-8.0
 
-USE_CUDA=1 python3 -u model.py --modelnameload c_def --server 1 --loaditerations 110000
+USE_CUDA=1 python3 -u model.py --modelnameload c_default --modelnamesave c_default --server 1

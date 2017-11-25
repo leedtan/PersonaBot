@@ -10,4 +10,4 @@
 module purge
 module load python-3.5 cuda-8.0
 
-USE_CUDA=1 python3 -u model.py --modelnameload c_adv --server 1 --adversarial_sample 0 --loaditerations 160000
+USE_CUDA=1 python3 -u model.py --modelnamesave c_adv --modelnameload c_adv --server 1 --adversarial_sample 0
