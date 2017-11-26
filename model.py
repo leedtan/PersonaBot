@@ -852,7 +852,7 @@ class Decoder(NN.Module):
             logp_selected = out.gather(1, indexes)
             return indexes, current_state, rnn_output, logp_selected
         else:
-            indexes = out.topk(1, 1)
+            indexes = out.topk(1, 1)[1]
             return indexes, current_state, rnn_output, False
 
     def greedyGenerateBleu(self, context_encodings, usr_emb, word_emb, dataset, Bleu=True):
