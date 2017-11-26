@@ -1443,11 +1443,13 @@ while True:
                         if len(end_idx) > 0:
                             end_idx = end_idx[0]
                             if end_idx > 0:
-                                print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:end_idx+1]))
+                                speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:end_idx+1])
+                                print('Real:', speaker[0], ' '.join(words[0]))
                                 printed = 1
                     if printed == 0 and words_padded_decode[i, 1].sum() > 0:
                         try:
-                            print('Real:',dataset.translate_item(None, None, words_padded_decode[i:i+1,:]))
+                            speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:])
+                            print('Real:', speaker[0], ' '.join(words[0]))
                             printed = 1
                         except:
                             print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
@@ -1462,10 +1464,12 @@ while True:
                         if len(end_idx) > 0:
                             end_idx = end_idx[0]
                             if end_idx > 0:
-                                print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:end_idx+1]))
+                                speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:end_idx+1])
+                                print('Fake:', speaker[0], ' '.join(words[0]))
                                 printed = 1
                     if printed == 0:
-                        print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
+                        speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:])
+                        print('Fake:', speaker[0], ' '.join(words[0]))
                     if words_padded_decode[i, 1].sum() == 0:
                         break
             time_decode += time.time() - start_decode

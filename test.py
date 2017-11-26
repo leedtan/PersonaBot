@@ -1190,7 +1190,7 @@ for item in dataloader:
         #enable_eval([user_emb, word_emb, enc, context, decoder])
         greedy_responses, _ = decoder.greedyGenerateBleu(
                 ctx[:1,:-1,:].view(-1, size_context + size_attn),
-                  usrs_b_decode[:1,:,:].view(-1, size_usr), word_emb, dataset, False)
+                  usrs_b_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
         # Only take the first turns[0] responses
         greedy_responses = greedy_responses[:turns[0]]
         reference = tonumpy(words_padded[0,1:turns[0],:])
@@ -1241,11 +1241,13 @@ for item in dataloader:
                 if len(end_idx) > 0:
                     end_idx = end_idx[0]
                     if end_idx > 0:
-                        print('Real:',dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:end_idx+1]))
+                        speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:end_idx+1])
+                        print('Real:', speaker[0], ' '.join(words[0]))
                         printed = 1
             if printed == 0 and words_padded_decode[i, 1].sum() > 0:
                 try:
-                    print('Real:',dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:]))
+                    speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:])
+                    print('Real:', speaker[0], ' '.join(words[0]))
                     printed = 1
                 except:
                     print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
@@ -1260,9 +1262,11 @@ for item in dataloader:
                 if len(end_idx) > 0:
                     end_idx = end_idx[0]
                     if end_idx > 0:
-                        print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:end_idx+1]))
+                        speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:end_idx+1])
+                        print('Fake:', speaker[0], ' '.join(words[0]))
                         printed = 1
             if printed == 0:
-                print('Fake:',dataset.translate_item(None, None, greedy_responses[i:i+1,:]))
+                speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:])
+                print('Fake:', speaker[0], ' '.join(words[0]))
             if words_padded_decode[i, 1].sum() == 0:
                 break
