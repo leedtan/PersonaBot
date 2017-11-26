@@ -1359,12 +1359,12 @@ while True:
             start_decode = time.time()
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
-                    ctx[:1,:,:].view(-1, size_context + size_attn),
-                      usrs_b[:1,:,:].view(-1, size_usr), word_emb, dataset)
+                    ctx[:1,:-1,:].view(-1, size_context + size_attn),
+                      usrs_b_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
             # Only take the first turns[0] responses
             greedy_responses = greedy_responses[:turns[0]]
             logprobs = logprobs[:turns[0]]
-            reference = tonumpy(words_padded[0,:turns[0],:])
+            reference = tonumpy(words_padded[0,1:turns[0],:])
             hypothesis = tonumpy(greedy_responses)
             logprobs_np = tonumpy(logprobs)
             
