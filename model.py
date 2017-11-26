@@ -792,86 +792,6 @@ class Decoder(NN.Module):
             else:
                 return out, log_prob, (h, c), reconstruct_loss_mean
 
-    def get_n_best_next_words(self, embed_seq, current_state, n=1):
-        """
-        :param embed_seq: batch_size x (usr_emb_size + w_emb_size + context_emb_size)
-        :param current_state: num_layers * num_directions x batch_size x hidden_size
-        :param n: int, return top n words.
-        :return: batch_size x n
-        """
-        embed_seq = cuda(embed_seq)
-        current_state = cuda(current_state)
-
-        batch_size = embed_seq.size(0)
-        embed, current_state = self.rnn(embed_seq.unsqueeze(0), current_state)
-        embed = embed.permute(1, 0, 2).contiguous()
-        attn = self.attention(embed, False)
-        
-        embed = T.cat((embed, attn),2)
-        #embed = embed.view(batch_size, -1, maxwordsmessage, self._state_size*2)
-        embed = embed.view(batch_size, self._state_size*2)
-        out = self.softmax(embed.squeeze())
-        val, indexes = out.topk(n, 1)
-        return val, indexes, current_state
-    def mat_idx_vector_to_vector(self, mat, vec):
-        """
-        :param mat: a matrix of size l lines x m cols
-        :param vec: vector of size l
-        :return: vector made of M[i, l[i]] i in [1,l]
-        """
-        out = T.LongTensor(mat.size(0))
-        for i in range(mat.size(0)):
-            out[i] = mat[i,vec[i]]
-
-        return out
-
-    def greedyGenerate(self, context_encodings, usr_emb, word_emb, dataset):
-        """
-        How to require_grad=False ?
-        :param context_encodings: (batch_size x context_size)
-        :param word_emb:  idx to vector word embedder.
-        :param usr_emb: (batch_size x usr_emb_size)
-        :return: response : (batch_size x max_response_length)
-        """
-        context_encodings = cuda(context_encodings)
-        usr_emb = cuda(usr_emb)
-        word_emb = cuda(word_emb)
-
-        num_layers = self._num_layers
-        state_size = self._state_size
-        max_len_generated = self._max_len_generated
-
-        batch_size = context_encodings.size(0)
-        ctx_for_attn = T.cat((context_encodings, usr_emb),1).unsqueeze(0)
-        cur_state = self.zero_state(batch_size, ctx_for_attn)
-
-        # Initial word of response : Start token
-        init_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
-        # End of generated sentence : EOS token
-        stop_word = cuda(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
-
-        current_w = init_word
-        output = current_w.data.unsqueeze(1)
-        init_seq = 0
-        while not stop_word.equal(current_w.data.squeeze()) and output.size(1) < max_len_generated:
-            current_w_emb = word_emb(current_w.squeeze())
-            if init_seq == 0:
-                init_seq = 1
-                embed_seq = current_w_emb.unsqueeze(0).contiguous()
-                wd_emb_for_attn = current_w_emb.unsqueeze(0).contiguous()
-            else:
-                X_i = current_w_emb.contiguous()
-                embed_seq = T.cat((embed_seq, X_i.unsqueeze(0)),0)
-                wd_emb_for_attn = T.cat((wd_emb_for_attn, current_w_emb.unsqueeze(0)),0)
-            current_w, cur_state = self.get_next_word(
-                    embed_seq, wd_emb_for_attn, ctx_for_attn, cur_state)
-            output = T.cat((output, current_w.data), 1)
-
-        output = cuda(output)
-        return output
-
-
-
     def get_next_word(self, prev_word, wd_emb_history_for_attn, rnn_output_history,
                       ctx_history_for_attn, cur_state, Bleu = False):
         """
@@ -933,9 +853,9 @@ class Decoder(NN.Module):
             return indexes, current_state, rnn_output, logp_selected
         else:
             indexes = out.topk(1, 1)
-            return indexes, current_state, rnn_output
+            return indexes, current_state, rnn_output, False
 
-    def greedyGenerateBleu(self, context_encodings, usr_emb, word_emb, dataset):
+    def greedyGenerateBleu(self, context_encodings, usr_emb, word_emb, dataset, Bleu=True):
         """
         How to require_grad=False ?
         :param context_encodings: (batch_size x context_size)
@@ -976,121 +896,12 @@ class Decoder(NN.Module):
             
             current_w, cur_state, rnn_output, current_logprob = self.get_next_word(
                     current_w_emb, wd_emb_for_attn, rnn_outputs,
-                      ctx_for_attn, cur_state, Bleu = True)
+                      ctx_for_attn, cur_state, Bleu = Bleu)
             output = T.cat((output, current_w), 1)
-            logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
+            if Bleu:
+                logprob = T.cat((logprob, current_logprob), 1) if logprob is not None else current_logprob
             
         return output, logprob
-
-    def viterbiGenerate(self, context_encodings, usr_emb, word_emb, dataset):
-        """
-        :param context_encodings: (batch_size x context_size)
-        :param usr_emb: (batch_size x usr_emb_size)
-        :param word_emb:  idx to vector word embedder.
-        :param dataset:  dataset to get EOS/START tokens ids
-        :param beam_size:  width of beam search.
-        :return: response : (batch_size x max_response_length)
-        """
-        context_encodings = cuda(context_encodings)
-        usr_emb = cuda(usr_emb)
-        word_emb = cuda(word_emb)
-
-        beam_size = self._beam_size
-        max_len_generated = self._max_len_generated
-        num_layers = self._num_layers
-        state_size = self._state_size
-        batch_size = context_encodings.size(0)
-
-        # End of generated sentence : EOS token
-        initial_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(START)))
-        stop_word = tovar(T.LongTensor(batch_size).fill_(dataset.index_word(EOS)))
-
-        usr_emb = usr_emb.unsqueeze(1)
-        context_encodings = context_encodings.unsqueeze(1)
-
-        # Viterbi tensors :
-        # dim 0 : 0 -> current word index, 1 -> previous word index leading to this word.
-        s_idx_w_idx = tovar(T.LongTensor(2, 1, batch_size, beam_size).fill_(dataset.index_word(START)))
-        s_idx_w_idx_logproba= tovar(T.FloatTensor(1, batch_size, beam_size).fill_(0))
-        s_idx_w_idx_lstm_h = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
-        s_idx_w_idx_lstm_c = tovar(T.zeros(num_layers, batch_size, beam_size, state_size))
-
-        # First step from START to first probable words :
-
-        lstm_h = tovar(T.zeros(num_layers, batch_size, state_size))
-        lstm_c = tovar(T.zeros(num_layers, batch_size, state_size))
-
-        current_w_emb = word_emb(initial_word.unsqueeze(1))
-        embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-        transition_probabilities, transition_index, current_state = self.get_n_best_next_words(
-                embed_seq.squeeze(), (lstm_h, lstm_c), beam_size)
-        next_wrd = transition_index.unsqueeze(0)
-        prev_idx =  tovar(T.zeros(transition_index.size()).long().unsqueeze(0))
-        nxt_s_idx_w_idx = T.cat((next_wrd, prev_idx), 0)
-        nxt_s_idx_w_idx = nxt_s_idx_w_idx.unsqueeze(1)
-        s_idx_w_idx= T.cat((s_idx_w_idx, nxt_s_idx_w_idx), 1)
-        s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, transition_probabilities.unsqueeze(0)), 0)
-        s_idx_w_idx_lstm_h = current_state[0].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
-        s_idx_w_idx_lstm_c = current_state[1].unsqueeze(2).expand_as(s_idx_w_idx_lstm_h).contiguous()
-
-        usr_emb = usr_emb.expand(usr_emb.size(0), beam_size, usr_emb.size(2))
-        context_encodings = context_encodings.expand(context_encodings.size(0), beam_size, context_encodings.size(2))
-
-        s_idx = 1
-
-        # Add constraint argmax probability is end word for all batch.
-
-        while s_idx < max_len_generated - 1:
-            current_w_emb = word_emb(s_idx_w_idx[0,s_idx])
-            embed_seq = T.cat((usr_emb, current_w_emb, context_encodings), 2)
-            transition_probabilities, transition_index, current_state = self.get_n_best_next_words(
-                    embed_seq.view(-1, embed_seq.size(2)), (s_idx_w_idx_lstm_h.view(num_layers, -1, state_size), 
-                                   s_idx_w_idx_lstm_c.view(num_layers, -1, state_size)), beam_size)
-
-            transition_index = transition_index.view(batch_size, -1)
-
-            transition_probabilities = transition_probabilities.view(batch_size, beam_size, beam_size)
-            transition_probabilities.add_(s_idx_w_idx_logproba[s_idx].unsqueeze(2).expand_as(transition_probabilities))
-            transition_probabilities = transition_probabilities.view(batch_size, -1)
-
-            lstm_h = current_state[0].view(num_layers, -1, beam_size, state_size)
-            lstm_c = current_state[1].view(num_layers, -1, beam_size, state_size)
-
-            best_transition_probabilities, best_transition_indexes = transition_probabilities.topk(beam_size, 1)
-            next_words = T.LongTensor(best_transition_indexes.size())
-
-            best_transition_indexes = best_transition_indexes.data
-            best_transition_return_index = best_transition_indexes / 13
-
-            for i in range(best_transition_indexes.size(0)):
-                next_words[i] = transition_index[i][best_transition_indexes[i]].data
-                s_idx_w_idx_lstm_h[:,i,:,:].data = lstm_h[:,:,best_transition_return_index[i],:][:,i,:,:].data
-                s_idx_w_idx_lstm_c[:, i, :, :].data = lstm_c[:, :, best_transition_return_index[i], :][:, i, :, :].data
-
-            s_idx_w_idx_logproba = T.cat((s_idx_w_idx_logproba, best_transition_probabilities.unsqueeze(0)), 0)
-
-            best_transition_indexes = best_transition_indexes.unsqueeze(0).unsqueeze(0)
-            next_words = next_words.unsqueeze(0).unsqueeze(0)
-            s_idx_w_idx = T.cat((s_idx_w_idx, T.cat((next_words, best_transition_indexes / beam_size), 0)), 1)
-
-            s_idx += 1
-
-        # Now we go through the viterbi matrix backward to get the best sentence :
-
-        s_idx_w_idx = s_idx_w_idx.data
-        answers = T.zeros(batch_size, s_idx + 1).long()
-
-        best_words, best_idx = s_idx_w_idx[0, s_idx].max(1)
-        idx_previous = self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], best_idx)
-        answers[:, s_idx] = best_words
-
-        while s_idx >= 1:
-            s_idx -= 1
-            answers[:, s_idx] = self.mat_idx_vector_to_vector(s_idx_w_idx[0,s_idx], idx_previous)
-            idx_previous =  self.mat_idx_vector_to_vector(s_idx_w_idx[1, s_idx], idx_previous)
-
-        answers = cuda(answers)
-        return answers
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
