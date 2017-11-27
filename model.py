@@ -162,7 +162,7 @@ class Context(NN.Module):
         return initial_state
 
     def forward(self, sent_encs, turns, sentence_lengths_padded,
-                wds_h, usrs_b, initial_state=None):
+                wds_h, usrs, initial_state=None):
             # attn: batch_size, max_turns, sentence_encoding_size
         sent_encs = cuda(sent_encs)
         turns = cuda(turns)
@@ -661,8 +661,8 @@ class Decoder(NN.Module):
         initial_state = (lstm_h.contiguous(), lstm_c.contiguous())
         return initial_state
 
-    def forward(self, context_encodings, wd_emb, usr_emb, sentence_lengths_padded, 
-                wd_target=None, initial_state=None, wds_b_reconstruct = None):
+    def forward(self, context_encodings, wds_first_sentence_removed, usr_emb, sentence_lengths_padded, 
+                wd_target=None, initial_state=None, wds_reconstruct = None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
@@ -674,13 +674,13 @@ class Decoder(NN.Module):
                 scalar is the log-likelihood.
         '''
         context_encodings = cuda(context_encodings)
-        wd_emb = cuda(wd_emb)
+        wds_first_sentence_removed = cuda(wds_first_sentence_removed)
         usr_emb = cuda(usr_emb)
         sentence_lengths_padded = cuda(sentence_lengths_padded)
         wd_target = cuda(wd_target)
         initial_state = cuda(initial_state)
 
-        batch_size, maxlenbatch, maxwordsmessage, _ = wd_emb.size()
+        batch_size, maxlenbatch, maxwordsmessage, _ = wds_first_sentence_removed.size()
         num_turns = maxlenbatch
         state_size = self._state_size
             
@@ -702,12 +702,11 @@ class Decoder(NN.Module):
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
         self.context_encodings = context_encodings
 
-        #embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
         indexes_in_sent = tovar(T.arange(0,maxwordsmessage).unsqueeze(0).unsqueeze(0).unsqueeze(3).expand(
                 batch_size, maxlenbatch, maxwordsmessage,1
                 ))
         
-        embed_seq = T.cat((wd_emb, indexes_in_sent),3).contiguous()
+        embed_seq = T.cat((wds_first_sentence_removed, indexes_in_sent),3).contiguous()
         '''
         embed_seq = self.F_in(embed_seq.view(batch_size * maxlenbatch * maxwordsmessage,-1))
         '''
@@ -720,7 +719,7 @@ class Decoder(NN.Module):
         self.rnn_state = (h, c)
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
-        wd_emb_attn = wd_emb[:,:,:maxwordsmessage,:]
+        wd_emb_attn = wds_first_sentence_removed[:,:,:maxwordsmessage,:]
         embed_shifted = T.cat((tovar(T.zeros((batch_size, maxlenbatch, 1, state_size))), embed[:,:,:-1,:]),2)
         embed_attn = T.cat((embed_shifted, wd_emb_attn),3)
         self.embed_attn = embed_attn
@@ -777,17 +776,17 @@ class Decoder(NN.Module):
             mask = (target != 0).float()
             out = out * mask
             log_prob = out.sum() / mask.sum()
-            if wds_b_reconstruct is not None:
+            if wds_reconstruct is not None:
                 
                 reconstruct_loss = ((reconstruct.view(
                         batch_size, maxlenbatch, maxwordsmessage, size_wd)
-                            - wds_b_reconstruct.detach()) ** 2) * mask.unsqueeze(-1)
+                            - wds_reconstruct.detach()) ** 2) * mask.unsqueeze(-1)
                 reconstruct_loss_mean = reconstruct_loss.sum() / mask.sum()
 
         if log_prob is None:
             return out, (h, c)#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
         else:
-            if wds_b_reconstruct is None:
+            if wds_reconstruct is None:
                 return out, log_prob, (h, c),
             else:
                 return out, log_prob, (h, c), reconstruct_loss_mean
@@ -1137,34 +1136,34 @@ while True:
         max_turns = words_padded.size()[1]
         max_words = words_padded.size()[2]
         #batch, turns in a sample, words in a message, embedding_dim
-        wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+        wds = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
         #SO FAR NOT USED:
         #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
         #batch, turns in a sample, embedding_dim
-        usrs_b = user_emb(speaker_padded)
+        usrs = user_emb(speaker_padded)
 
         # The idea is to fix the word embedding and user embedding once for a while,
         # and train the rest of the network using adversarial sampling.
         if itr % 10 == 1 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
-            wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds_b, usrs_b, turns,
+            wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds, usrs, turns,
                size_wd,batch_size,size_usr,
                sentence_lengths_padded, enc,
                context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
             # to fix the pre-adversarial-sampling components, we detach the inputs
-            wds_b = tovar((wds_b + tovar(wds_adv)).data)
-            usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
+            wds = tovar((wds + tovar(wds_adv)).data)
+            usrs = tovar((usrs + tovar(usrs_adv)).data)
 
         # Not sure why these two statements are here...
         max_turns = turns.max()
-        max_words = wds_b.size()[2]
+        max_words = wds.size()[2]
 
         # Get the encoding vector for each sentence (@encodings), as well as
         # annotation vectors for each word in each sentence (@wds_h) so that we
         # can attend later.
         # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
         # users, and a batch of sentence lengths.
-        encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),usrs_b.view(
+        encodings, wds_h = enc(wds.view(batch_size * max_turns, max_words, size_wd),usrs.view(
                 batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
 
         assert np.all(~np.isnan(tonumpy(encodings)))
@@ -1173,36 +1172,39 @@ while True:
         if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, enc_adv, wds_h_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
-                    wds_b,usrs_b,max_turns, context, turns, 
+                    wds,usrs,max_turns, context, turns, 
                     sentence_lengths_padded, words_padded, decoder,
                     usr_std, wd_std, sent_std, wds_h, wds_h_std, scale=scale, style=adv_style)
-            wds_b = tovar((wds_b + tovar(wds_adv)).data)
-            usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
+            wds = tovar((wds + tovar(wds_adv)).data)
+            usrs = tovar((usrs + tovar(usrs_adv)).data)
             encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
             wds_h = tovar((wds_h + tovar(wds_h_adv).view_as(wds_h)).data)
             
         encodings = encodings.view(batch_size, max_turns, -1)
-        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs)
 
         # Do the same for everything except the decoder
         if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
             wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
-                      wds_b,usrs_b,words_padded, decoder,
+                      wds,usrs,words_padded, decoder,
                       usr_std, wd_std, ctx_std, wds_h, scale=scale, style=adv_style)
-            wds_b = tovar((wds_b + tovar(wds_adv)).data)
-            usrs_b = tovar((usrs_b + tovar(usrs_adv)).data)
+            wds = tovar((wds + tovar(wds_adv)).data)
+            usrs = tovar((usrs + tovar(usrs_adv)).data)
             ctx = tovar((ctx + tovar(ctx_adv)).data)
         max_output_words = sentence_lengths_padded[:, 1:].max()
-        wds_b_decode = wds_b[:,1:,:max_output_words]
-        wds_b_reconstruct = T.cat((
-                wds_b_decode[:,:,1:,:], cuda(T.zeros(wds_b_decode.size()[0], 
-                wds_b_decode.size()[1], 1, wds_b_decode.size()[3]))),2).contiguous()
-        usrs_b_decode = usrs_b[:,1:]
+        wds_first_sentence_removed = wds[:,1:,:max_output_words]
+        wds_reconstruct = T.cat((
+                wds_first_sentence_removed[:,:,1:,:], 
+                cuda(T.zeros(wds_first_sentence_removed.size()[0],
+                             wds_first_sentence_removed.size()[1], 1, 
+                             wds_first_sentence_removed.size()[3]))
+            ),2).contiguous()
+        usrs_decode = usrs[:,1:]
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
-        prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_b_decode,
-                                 usrs_b_decode, sentence_lengths_padded[:,1:], 
-                                 words_flat, wds_b_reconstruct = wds_b_reconstruct)
+        prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_first_sentence_removed,
+                                 usrs_decode, sentence_lengths_padded[:,1:], 
+                                 words_flat, wds_reconstruct = wds_reconstruct)
 
         # Training with PPL
         loss = -log_prob
@@ -1261,10 +1263,10 @@ while True:
             adv_ctx_scales.append(scale)
             train_writer.add_summary(
                 TF.Summary(value=[TF.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
-        mask = mask_4d(wds_b.size(), turns , sentence_lengths_padded)
-        wds_dist = wds_b* mask
-        mask = mask_3d(usrs_b.size(), turns)
-        usrs_dist = usrs_b * mask
+        mask = mask_4d(wds.size(), turns , sentence_lengths_padded)
+        wds_dist = wds* mask
+        mask = mask_3d(usrs.size(), turns)
+        usrs_dist = usrs * mask
         mask = mask_3d(encodings.size(), turns)
         sent_dist = encodings * mask
         wds_h_mask = wds_h.view(wds_h.size(0), args.batchsize, -1, wds_h.size(2)).permute(1,2,0,3)
@@ -1302,8 +1304,8 @@ while True:
                     )
         time_train += time.time() - start_train
         if itr % scatter_entropy_freq == 0:
-            prob, _ = decoder(ctx[:1,:-1], wds_b_decode[:1,:,:].contiguous(),
-                                 usrs_b_decode[:1:], sentence_lengths_padded[:1,1:])
+            prob, _ = decoder(ctx[:1,:-1], wds_first_sentence_removed[:1,:,:].contiguous(),
+                                 usrs_decode[:1:], sentence_lengths_padded[:1,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
             mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
             Entropy = (prob.exp() * prob * -1) * mask
@@ -1360,7 +1362,7 @@ while True:
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
                     ctx[:1,:-1,:].view(-1, size_context + size_attn),
-                      usrs_b_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
+                      usrs_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
             # Only take the first turns[0] responses
             greedy_responses = greedy_responses[:turns[0]]
             logprobs = logprobs[:turns[0]]
