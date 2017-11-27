@@ -846,6 +846,7 @@ class Decoder(NN.Module):
         embed = T.cat((embed, reconstruct),1)
         embed = self.F_output(embed)
         out = self.softmax(embed)
+        out[:,unk] = -np.inf
         #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
             indexes = out.exp().multinomial().detach()
@@ -1063,6 +1064,7 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                num_layers = args.decoder_layers, non_linearities = args.non_linearities))
 
 eos = dataset.index_word(EOS)
+unk = dataset.index_word(UNKNOWN)
 
 loss_nan = reg_nan = grad_nan = 0
 
