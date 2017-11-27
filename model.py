@@ -475,7 +475,10 @@ class SeltAttentionWd(Attention):
     def test(self,context, single_attn_head):
         #size head: 1, 
         batch_size, num_wds, size_context = context.size()
-        batch_size, size_head = single_attn_head.size()
+        if single_attn_head.dim() == 1:
+            batch_size, size_head = 1, single_attn_head.size()[0]
+        else:
+            batch_size, size_head = single_attn_head.size()
         size_attn = self._size_attn
         context = cuda(context)
         single_attn_head = cuda(single_attn_head)
@@ -821,7 +824,8 @@ class Decoder(NN.Module):
         rnn_output = rnn_output.squeeze().contiguous()
         #number sentences parallel, num_words, size_emb
         attn_ctx = T.cat((rnn_output_history, wd_emb_history_for_attn),2)
-        
+        if rnn_output.dim() == 1:
+            rnn_output = rnn_output.view(1, rnn_output.size()[0])
         attn = self.SeltAttentionWd.test(
                 attn_ctx, rnn_output)
         #attn is num_sentences_parallel by attn_ctx
