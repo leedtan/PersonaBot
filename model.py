@@ -1099,7 +1099,7 @@ def enable_train(sub_modules):
 def enable_eval(sub_modules):
     for m in sub_modules:
         m.eval()
-opt = T.optim.Adam(params, lr=args.lr)
+opt = T.optim.Adam(params, lr=args.lr,weight_decay=1e-8)
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
 adv_style = 0
@@ -1171,9 +1171,14 @@ while True:
         # users, and a batch of sentence lengths.
         encodings, wds_h = enc(wds.view(batch_size * max_turns, max_words, size_wd),usrs.view(
                 batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
-
-        assert np.all(~np.isnan(tonumpy(encodings)))
-        assert np.all(~np.isnan(tonumpy(wds_h)))
+        if not np.all(~np.isnan(tonumpy(encodings))):
+            print('crash 1')
+            continue
+        if not np.all(~np.isnan(tonumpy(wds_h))):
+            print('crash 2')
+            continue
+        #assert np.all(~np.isnan(tonumpy(encodings)))
+        #assert np.all(~np.isnan(tonumpy(wds_h)))
         # Do the same for word-embedding, user-embedding, and encoder network
         if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
             scale = float(np.exp(-np.random.uniform(6,7)))
@@ -1250,8 +1255,14 @@ while True:
             continue
         #print('Grad norm', grad_norm)
         '''
-        assert np.all(~np.isnan(tonumpy(loss)))
-        assert np.all(~np.isnan(tonumpy(reg)))
+        if not np.all(~np.isnan(tonumpy(loss))):
+            print('crash 3')
+            continue
+        if not np.all(~np.isnan(tonumpy(reg))):
+            print('crash 4')
+            continue
+        #assert np.all(~np.isnan(tonumpy(loss)))
+        #assert np.all(~np.isnan(tonumpy(reg)))
 
         # Tensorboard viz start...
         if itr % 10 == 1 and args.adversarial_sample == 1 and itr > adv_min_itr:
@@ -1410,7 +1421,11 @@ while True:
             for r in range(hypothesis.shape[0]):
                 for c in range(1,hypothesis.shape[1]):
                     reward[r,c-1] -= (batch_words[hypothesis[r,c]]/total_words)**2 * args.lambda_repetitive
-            assert np.all(~np.isnan(reward))
+                    
+            if not np.all(~np.isnan(tonumpy(reward))):
+                print('crash 5')
+                continue
+            #assert np.all(~np.isnan(reward))
             for idx in range(reference.shape[0]):
                 if lengths_gen[idx] < reward.shape[1]:
                     reward[idx,lengths_gen[idx]:] = 0
@@ -1488,7 +1503,10 @@ while True:
                 p.grad.data += grads[p]
             if p.grad is not None and p in reg_grads:
                 p.grad.data += reg_grads[p]
-        assert check_grad(params)
+        if not check_grad(params):
+            print('crash 6')
+            continue
+        #assert check_grad(params)
         clip_grad(params, args.gradclip)
         opt.step()
         
