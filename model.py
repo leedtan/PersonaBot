@@ -849,13 +849,16 @@ class Decoder(NN.Module):
         embed = T.cat((embed, reconstruct),1)
         embed = self.F_output(embed)
         out = self.softmax(embed)
-        out[:,unk] = -np.inf
+        #out = T.cat((out[:,:unk], out[:,unk:unk+1] - 10),1)
+        #out[:,unk] = -np.inf
         #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
+            out = T.cat((out[:,:unk], out[:,unk:unk+1] - 10),1)
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
             return indexes, current_state, rnn_output, logp_selected
         else:
+            out[:,unk] = -np.inf
             indexes = out.topk(1, 1)[1]
             return indexes, current_state, rnn_output, False
 
