@@ -853,7 +853,7 @@ class Decoder(NN.Module):
         #out[:,unk] = -np.inf
         #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
-            out = T.cat((out[:,:unk], out[:,unk:unk+1] - 10),1)
+            #out = T.cat((out[:,:unk], out[:,unk:unk+1] - 10),1)
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
             return indexes, current_state, rnn_output, logp_selected
