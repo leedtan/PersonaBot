@@ -1323,4 +1323,4 @@ while True:
             break
 
     words = [dataset.index_word(w) for w in words[0]]
-    sentence_history[-1] = words[0]
+    sentence_history[-1] = words
