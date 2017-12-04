@@ -163,7 +163,7 @@ class Context(NN.Module):
         return initial_state
 
     def forward(self, sent_encs, turns, sentence_lengths_padded,
-                wds_h, usrs_b, initial_state=None):
+                wds_h, usrs, initial_state=None):
             # attn: batch_size, max_turns, sentence_encoding_size
         sent_encs = cuda(sent_encs)
         turns = cuda(turns)
@@ -476,7 +476,10 @@ class SeltAttentionWd(Attention):
     def test(self,context, single_attn_head):
         #size head: 1, 
         batch_size, num_wds, size_context = context.size()
-        batch_size, size_head = single_attn_head.size()
+        if single_attn_head.dim() == 1:
+            batch_size, size_head = 1, single_attn_head.size()[0]
+        else:
+            batch_size, size_head = single_attn_head.size()
         size_attn = self._size_attn
         context = cuda(context)
         single_attn_head = cuda(single_attn_head)
@@ -662,8 +665,8 @@ class Decoder(NN.Module):
         initial_state = (lstm_h.contiguous(), lstm_c.contiguous())
         return initial_state
 
-    def forward(self, context_encodings, wd_emb, usr_emb, sentence_lengths_padded, 
-                wd_target=None, initial_state=None, wds_b_reconstruct = None):
+    def forward(self, context_encodings, wds_first_sentence_removed, usr_emb, sentence_lengths_padded, 
+                wd_target=None, initial_state=None, wds_reconstruct = None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
@@ -675,13 +678,13 @@ class Decoder(NN.Module):
                 scalar is the log-likelihood.
         '''
         context_encodings = cuda(context_encodings)
-        wd_emb = cuda(wd_emb)
+        wds_first_sentence_removed = cuda(wds_first_sentence_removed)
         usr_emb = cuda(usr_emb)
         sentence_lengths_padded = cuda(sentence_lengths_padded)
         wd_target = cuda(wd_target)
         initial_state = cuda(initial_state)
 
-        batch_size, maxlenbatch, maxwordsmessage, _ = wd_emb.size()
+        batch_size, maxlenbatch, maxwordsmessage, _ = wds_first_sentence_removed.size()
         num_turns = maxlenbatch
         state_size = self._state_size
             
@@ -703,12 +706,11 @@ class Decoder(NN.Module):
                 batch_size,maxlenbatch,maxwordsmessage, context_encodings.size()[-1])
         self.context_encodings = context_encodings
 
-        #embed_seq =  T.cat((usr_emb, wd_emb, context_encodings),3)
         indexes_in_sent = tovar(T.arange(0,maxwordsmessage).unsqueeze(0).unsqueeze(0).unsqueeze(3).expand(
                 batch_size, maxlenbatch, maxwordsmessage,1
                 ))
         
-        embed_seq = T.cat((wd_emb, indexes_in_sent),3).contiguous()
+        embed_seq = T.cat((wds_first_sentence_removed, indexes_in_sent),3).contiguous()
         '''
         embed_seq = self.F_in(embed_seq.view(batch_size * maxlenbatch * maxwordsmessage,-1))
         '''
@@ -721,7 +723,7 @@ class Decoder(NN.Module):
         self.rnn_state = (h, c)
         maxwordsmessage = embed.size()[0]
         embed = embed.permute(1, 0, 2).contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
-        wd_emb_attn = wd_emb[:,:,:maxwordsmessage,:]
+        wd_emb_attn = wds_first_sentence_removed[:,:,:maxwordsmessage,:]
         embed_shifted = T.cat((tovar(T.zeros((batch_size, maxlenbatch, 1, state_size))), embed[:,:,:-1,:]),2)
         embed_attn = T.cat((embed_shifted, wd_emb_attn),3)
         self.embed_attn = embed_attn
@@ -778,17 +780,17 @@ class Decoder(NN.Module):
             mask = (target != 0).float()
             out = out * mask
             log_prob = out.sum() / mask.sum()
-            if wds_b_reconstruct is not None:
+            if wds_reconstruct is not None:
                 
                 reconstruct_loss = ((reconstruct.view(
                         batch_size, maxlenbatch, maxwordsmessage, size_wd)
-                            - wds_b_reconstruct.detach()) ** 2) * mask.unsqueeze(-1)
+                            - wds_reconstruct.detach()) ** 2) * mask.unsqueeze(-1)
                 reconstruct_loss_mean = reconstruct_loss.sum() / mask.sum()
 
         if log_prob is None:
             return out, (h, c)#.contiguous().view(batch_size, maxlenbatch, maxwordsmessage, -1)
         else:
-            if wds_b_reconstruct is None:
+            if wds_reconstruct is None:
                 return out, log_prob, (h, c),
             else:
                 return out, log_prob, (h, c), reconstruct_loss_mean
@@ -823,7 +825,8 @@ class Decoder(NN.Module):
         rnn_output = rnn_output.squeeze(0).contiguous()
         #number sentences parallel, num_words, size_emb
         attn_ctx = T.cat((rnn_output_history, wd_emb_history_for_attn),2)
-        
+        if rnn_output.dim() == 1:
+            rnn_output = rnn_output.view(1, rnn_output.size()[0])
         attn = self.SeltAttentionWd.test(
                 attn_ctx, rnn_output)
         #attn is num_sentences_parallel by attn_ctx
@@ -847,12 +850,16 @@ class Decoder(NN.Module):
         embed = T.cat((embed, reconstruct),1)
         embed = self.F_output(embed)
         out = self.softmax(embed)
+        #out = T.cat((out[:,:unk], out[:,unk:unk+1] - 10),1)
+        #out[:,unk] = -np.inf
         #out = gaussian(out, True, 0, 10/(1+np.sqrt(itr)))
         if Bleu:
+            #out = T.cat((out[:,:unk], out[:,unk:unk+1] - 10),1)
             indexes = out.exp().multinomial().detach()
             logp_selected = out.gather(1, indexes)
             return indexes, current_state, rnn_output, logp_selected
         else:
+            out[:,unk] = -np.inf
             indexes = out.topk(1, 1)[1]
             return indexes, current_state, rnn_output, False
 
@@ -937,8 +944,8 @@ parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
-parser.add_argument('--lambda_pg', type=float, default=.01)
-parser.add_argument('--lambda_repetitive', type=float, default=.3)
+parser.add_argument('--lambda_pg', type=float, default=.001)
+parser.add_argument('--lambda_repetitive', type=float, default=10.)
 parser.add_argument('--lambda_reconstruct', type=float, default=.1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
@@ -1064,6 +1071,7 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                num_layers = args.decoder_layers, non_linearities = args.non_linearities))
 
 eos = dataset.index_word(EOS)
+unk = dataset.index_word(UNKNOWN)
 
 loss_nan = reg_nan = grad_nan = 0
 
@@ -1095,7 +1103,7 @@ def enable_train(sub_modules):
 def enable_eval(sub_modules):
     for m in sub_modules:
         m.eval()
-opt = T.optim.Adam(params, lr=args.lr)
+opt = T.optim.Adam(params, lr=args.lr,weight_decay=1e-8)
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
 adv_style = 0
@@ -1161,44 +1169,48 @@ while True:
     max_turns = words_padded.size()[1]
     max_words = words_padded.size()[2]
     #batch, turns in a sample, words in a message, embedding_dim
-    wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+    wds = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
     #SO FAR NOT USED:
     #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
     #batch, turns in a sample, embedding_dim
-    usrs_b = user_emb(speaker_padded)
+    usrs = user_emb(speaker_padded)
 
     # Not sure why these two statements are here...
     max_turns = turns.max()
-    max_words = wds_b.size()[2]
+    max_words = wds.size()[2]
 
     # Get the encoding vector for each sentence (@encodings), as well as
     # annotation vectors for each word in each sentence (@wds_h) so that we
     # can attend later.
     # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
     # users, and a batch of sentence lengths.
-    encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),usrs_b.view(
+    encodings, wds_h = enc(wds.view(batch_size * max_turns, max_words, size_wd),usrs.view(
             batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
 
-    assert np.all(~np.isnan(tonumpy(encodings)))
-    assert np.all(~np.isnan(tonumpy(wds_h)))
+    if not np.all(~np.isnan(tonumpy(encodings))):
+        print('crash 1')
+        continue
+    if not np.all(~np.isnan(tonumpy(wds_h))):
+        print('crash 2')
+        continue
     # Do the same for word-embedding, user-embedding, and encoder network
     encodings = encodings.view(batch_size, max_turns, -1)
-    ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+    ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs)
 
     # Do the same for everything except the decoder
     '''
-    max_output_words = args.max_sentence_length_allowed
+    max_output_words = sentence_lengths_padded[:, 1:].max()
     wds_b_decode = wds_b[:,1:,:max_output_words]
     wds_b_reconstruct = T.cat((
             wds_b_decode[:,:,1:,:], cuda(T.zeros(wds_b_decode.size()[0], 
             wds_b_decode.size()[1], 1, wds_b_decode.size()[3]))),2).contiguous()
     '''
-    usrs_b_decode = usrs_b[:,1:]
+    usrs_decode = usrs[:,1:]
     '''
     words_flat = words_padded[:,1:,:max_output_words].contiguous()
-    prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_b_decode,
-                             usrs_b_decode, sentence_lengths_padded[:,1:], 
-                             words_flat, wds_b_reconstruct = wds_b_reconstruct)
+    prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_first_sentence_removed,
+                             usrs_decode, sentence_lengths_padded[:,1:], 
+                             words_flat, wds_reconstruct = wds_reconstruct)
     '''
 
     #print(loss, grad_norm)
@@ -1228,7 +1240,7 @@ while True:
     #enable_eval([user_emb, word_emb, enc, context, decoder])
     greedy_responses, _ = decoder.greedyGenerateBleu(
             ctx[:1,:-1,:].view(-1, size_context + size_attn),
-              usrs_b_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
+              usrs_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
     greedy_responses = greedy_responses[-1:]
     hypothesis = tonumpy(greedy_responses)
     
