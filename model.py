@@ -944,7 +944,7 @@ parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
 parser.add_argument('--dec_gpu_id', type=int, default=0)
 parser.add_argument('--lambda_pg', type=float, default=.001)
-parser.add_argument('--lambda_repetitive', type=float, default=10.)
+parser.add_argument('--lambda_repetitive', type=float, default=1.)
 parser.add_argument('--lambda_reconstruct', type=float, default=.1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
@@ -1377,7 +1377,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0 and itr > 100:
+        if itr % 10 == 0 and itr > 10:
             start_decode = time.time()
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
@@ -1397,6 +1397,8 @@ while True:
             BLEUscoresplot = []
             lengths_gen = []
             batch_words = Counter()
+            batch_bigrams = Counter()
+            batch_trigrams = Counter()
             smoother = bleu_score.SmoothingFunction()
             for idx in range(reference.shape[0]):
                 real_sent.append(reference[idx, :sentence_lengths_padded[0,idx]])
@@ -1408,6 +1410,8 @@ while True:
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words+1])
                 batch_words.update(gen_sent[-1][1:])
+                batch_bigrams.update([tuple(gen_sent[-1][i:i+2]) for i in range(len(gen_sent[-1])-1)])
+                batch_trigrams.update([tuple(gen_sent[-1][i:i+3]) for i in range(len(gen_sent[-1])-2)])
                 curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
                 BLEUscoresplot.append(curr_bleu)
@@ -1421,9 +1425,28 @@ while True:
             reward = np.array(BLEUscores) - baseline
             reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
             total_words = sum(batch_words.values())
+            total_bigrams = sum(batch_bigrams.values())
+            total_trigrams = sum(batch_trigrams.values())
             for r in range(hypothesis.shape[0]):
                 for c in range(1,hypothesis.shape[1]):
-                    reward[r,c-1] -= (batch_words[hypothesis[r,c]]/total_words)**2 * args.lambda_repetitive
+                    unigram_count = batch_words[hypothesis[r,c]]
+                    if unigram_count > 3:
+                        unigram_penalty = (unigram_count/total_words)**2
+                        reward[r,c-1] -= unigram_penalty * args.lambda_repetitive
+            
+            for r in range(hypothesis.shape[0]):
+                for c in range(1,hypothesis.shape[1]-1):
+                    bigram_count = batch_bigrams[tuple(hypothesis[r,c-1:c+1])]
+                    if bigram_count > 2:
+                        bigram_penalty = (bigram_count / total_bigrams)
+                        reward[r,c-1:c+1] -= bigram_penalty * args.lambda_repetitive * 3
+            
+            for r in range(hypothesis.shape[0]):
+                for c in range(1,hypothesis.shape[1]-2):
+                    trigram_count = batch_trigrams[tuple(hypothesis[r,c-1:c+2])]
+                    if trigram_count > 1:
+                        trigram_penalty = (trigram_count / total_trigrams)
+                        reward[r,c-1:c+2] -= trigram_penalty * args.lambda_repetitive * 10
                     
             if not np.all(~np.isnan(tonumpy(reward))):
                 print('crash 5')
