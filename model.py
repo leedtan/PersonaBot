@@ -913,7 +913,7 @@ class Decoder(NN.Module):
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='ubuntu-meta', help='Root of meta data')
-parser.add_argument('--vocabsize', type=int, default=9996, help='Vocabulary size')
+parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -1377,7 +1377,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0 and itr > 10:
+        if itr % 10 == 0 and itr > 100:
             start_decode = time.time()
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
@@ -1425,33 +1425,37 @@ while True:
             reward = np.array(BLEUscores) - baseline
             reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
             total_words = sum(batch_words.values())
-            total_bigrams = sum(batch_bigrams.values())
-            total_trigrams = sum(batch_trigrams.values())
+            total_bigrams = max([40, sum(batch_bigrams.values())])
+            total_trigrams = max([40, sum(batch_trigrams.values())])
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(1,lengths_gen[sentence_idx]):
                     unigram_count = batch_words[hypothesis[sentence_idx,word_idx]]
                     if unigram_count > 3:
                         unigram_penalty = (unigram_count/total_words)**2
-                        reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive * 0
+                        reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive
             
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(0,lengths_gen[sentence_idx]):
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
-                        bigram_penalty = (bigram_count / total_bigrams)
+                        #.1 is transition. yields .03, and .03
+                        bigram_penalty = (bigram_count / total_bigrams) * .3 + \
+                            ((bigram_count / total_bigrams) ** 2) * 3
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
-                            reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive * 3 * 0 
+                            reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive
             
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(0,lengths_gen[sentence_idx]-1):
                     trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
                     if trigram_count > 1:
-                        trigram_penalty = (trigram_count / total_trigrams)
+                        #.1 is transition of loss importance. yields .1 from first loss, .1 from second loss
+                        trigram_penalty = (trigram_count / total_trigrams) * 1 + \
+                            ((trigram_count / total_trigrams) ** 2) * 10
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
                         for ci in range(min_c, word_idx + 2):
-                            reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive * 10 * 0
+                            reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive * 10
                         
             if not np.all(~np.isnan(tonumpy(reward))):
                 print('crash 5')
