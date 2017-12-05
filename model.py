@@ -1427,12 +1427,16 @@ while True:
             total_words = sum(batch_words.values())
             total_bigrams = max([40, sum(batch_bigrams.values())])
             total_trigrams = max([40, sum(batch_trigrams.values())])
+            tot_unigram_penalty = 0
+            tot_bigram_penalty = 0
+            tot_trigram_penalty = 0
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(1,lengths_gen[sentence_idx]):
                     unigram_count = batch_words[hypothesis[sentence_idx,word_idx]]
                     if unigram_count > 3:
                         unigram_penalty = (unigram_count/total_words)**2
                         reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive
+                        tot_unigram_penalty += unigram_penalty * args.lambda_repetitive
             
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(0,lengths_gen[sentence_idx]):
@@ -1444,6 +1448,7 @@ while True:
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
                             reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive
+                            tot_bigram_penalty += bigram_penalty * args.lambda_repetitive
             
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(0,lengths_gen[sentence_idx]-1):
@@ -1455,7 +1460,8 @@ while True:
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
                         for ci in range(min_c, word_idx + 2):
-                            reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive * 10
+                            reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive
+                            tot_trigram_penalty += trigram_penalty * args.lambda_repetitive
                         
             if not np.all(~np.isnan(tonumpy(reward))):
                 print('crash 5')
@@ -1477,6 +1483,9 @@ while True:
                         value=[
                             TF.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscoresplot)),
                             TF.Summary.Value(tag='pg_grad_norm', simple_value=pg_grad_norm),
+                            TF.Summary.Value(tag='unigram_penalty', simple_value=tot_unigram_penalty),
+                            TF.Summary.Value(tag='bigram_penalty', simple_value=tot_bigram_penalty),
+                            TF.Summary.Value(tag='trigram_penalty', simple_value=tot_trigram_penalty),
                             ]
                         ),
                     itr
