@@ -138,6 +138,18 @@ class UbuntuDialogDataset(Dataset):
 
         return addressee, speaker, words
 
+    def index(self, addressee, speaker, sentences, padding=False):
+        addressee = [self.index_user(u) for u in addressee] if addressee is not None else None
+        speaker = [self.index_user(u) for u in speaker] if speaker is not None else None
+        words = [[self.get_word(w) for w in s] for s in sentences] if sentences is not None else None
+
+        if padding:
+            maxlen = max(len(s) for s in words)
+            for s in words:
+                s.extend([0] * (maxlen - len(s)))
+
+        return addressee, speaker, words
+
     @property
     def unknown_word_index(self):
         return len(self._vocab)
