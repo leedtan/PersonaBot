@@ -1447,7 +1447,7 @@ while True:
                             ((bigram_count / total_bigrams) ** 2) * 2
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
-                            if ci > reward.shape[1]:
+                            if ci >= reward.shape[1]:
                                 continue
                             reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive
                             tot_bigram_penalty += bigram_penalty * args.lambda_repetitive
@@ -1462,7 +1462,7 @@ while True:
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
                         for ci in range(min_c, word_idx + 2):
-                            if ci > reward.shape[1]:
+                            if ci >= reward.shape[1]:
                                 continue
                             reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive
                             tot_trigram_penalty += trigram_penalty * args.lambda_repetitive
