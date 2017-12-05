@@ -913,7 +913,7 @@ class Decoder(NN.Module):
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='ubuntu-meta', help='Root of meta data')
-parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary size')
+parser.add_argument('--vocabsize', type=int, default=9996, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -1410,8 +1410,8 @@ while True:
                 lengths_gen.append(num_words)
                 gen_sent.append(hypothesis[idx, :num_words+1])
                 batch_words.update(gen_sent[-1][1:])
-                batch_bigrams.update([tuple(gen_sent[-1][i:i+2]) for i in range(len(gen_sent[-1])-1)])
-                batch_trigrams.update([tuple(gen_sent[-1][i:i+3]) for i in range(len(gen_sent[-1])-2)])
+                batch_bigrams.update([tuple(gen_sent[-1][i:i+2]) for i in range(len(gen_sent[-1]))])
+                batch_trigrams.update([tuple(gen_sent[-1][i:i+3]) for i in range(len(gen_sent[-1])-1)])
                 curr_bleu = bleu_score.sentence_bleu(
                         [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
                 BLEUscoresplot.append(curr_bleu)
@@ -1427,27 +1427,32 @@ while True:
             total_words = sum(batch_words.values())
             total_bigrams = sum(batch_bigrams.values())
             total_trigrams = sum(batch_trigrams.values())
-            for r in range(hypothesis.shape[0]):
-                for c in range(1,hypothesis.shape[1]):
-                    unigram_count = batch_words[hypothesis[r,c]]
+            for sentence_idx in range(hypothesis.shape[0]):
+                for word_idx in range(1,lengths_gen[sentence_idx]):
+                    unigram_count = batch_words[hypothesis[sentence_idx,word_idx]]
                     if unigram_count > 3:
                         unigram_penalty = (unigram_count/total_words)**2
-                        reward[r,c-1] -= unigram_penalty * args.lambda_repetitive
+                        reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive * 0
             
-            for r in range(hypothesis.shape[0]):
-                for c in range(1,hypothesis.shape[1]-1):
-                    bigram_count = batch_bigrams[tuple(hypothesis[r,c-1:c+1])]
+            for sentence_idx in range(hypothesis.shape[0]):
+                for word_idx in range(0,lengths_gen[sentence_idx]):
+                    bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
                         bigram_penalty = (bigram_count / total_bigrams)
-                        reward[r,c-1:c+1] -= bigram_penalty * args.lambda_repetitive * 3
+                        min_c = max([word_idx-1,0])
+                        for ci in range(min_c, word_idx+1):
+                            reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive * 3 * 0 
             
-            for r in range(hypothesis.shape[0]):
-                for c in range(1,hypothesis.shape[1]-2):
-                    trigram_count = batch_trigrams[tuple(hypothesis[r,c-1:c+2])]
+            for sentence_idx in range(hypothesis.shape[0]):
+                for word_idx in range(0,lengths_gen[sentence_idx]-1):
+                    trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
                     if trigram_count > 1:
                         trigram_penalty = (trigram_count / total_trigrams)
-                        reward[r,c-1:c+2] -= trigram_penalty * args.lambda_repetitive * 10
-                    
+                        min_c = max([word_idx-1,0])
+                        #max_c = min([word_idx+1, reward.shape[1]])
+                        for ci in range(min_c, word_idx + 2):
+                            reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive * 10 * 0
+                        
             if not np.all(~np.isnan(tonumpy(reward))):
                 print('crash 5')
                 continue
