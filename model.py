@@ -1425,8 +1425,8 @@ while True:
             reward = np.array(BLEUscores) - baseline
             reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
             total_words = sum(batch_words.values())
-            total_bigrams = max([40, sum(batch_bigrams.values())])
-            total_trigrams = max([40, sum(batch_trigrams.values())])
+            total_bigrams = max([10, sum(batch_bigrams.values())])
+            total_trigrams = max([10, sum(batch_trigrams.values())])
             tot_unigram_penalty = 0
             tot_bigram_penalty = 0
             tot_trigram_penalty = 0
@@ -1442,9 +1442,9 @@ while True:
                 for word_idx in range(0,lengths_gen[sentence_idx]):
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
-                        #.1 is transition. yields .03, and .03
-                        bigram_penalty = (bigram_count / total_bigrams) * .3 + \
-                            ((bigram_count / total_bigrams) ** 2) * 3
+                        #.1 is transition. yields .02, and .02
+                        bigram_penalty = (bigram_count / total_bigrams) * .2 + \
+                            ((bigram_count / total_bigrams) ** 2) * 2
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
                             reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive
@@ -1454,9 +1454,9 @@ while True:
                 for word_idx in range(0,lengths_gen[sentence_idx]-1):
                     trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
                     if trigram_count > 1:
-                        #.1 is transition of loss importance. yields .1 from first loss, .1 from second loss
-                        trigram_penalty = (trigram_count / total_trigrams) * 1 + \
-                            ((trigram_count / total_trigrams) ** 2) * 10
+                        #.1 is transition of loss importance. yields .03 from first loss, .03 from second loss
+                        trigram_penalty = (trigram_count / total_trigrams) * .3 + \
+                            ((trigram_count / total_trigrams) ** 2) * 3
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
                         for ci in range(min_c, word_idx + 2):
