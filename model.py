@@ -1443,10 +1443,10 @@ while True:
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
                         #.1 is transition. yields .02, and .02
-                        bigram_penalty = (bigram_count / total_bigrams) * .2 + \
-                            ((bigram_count / total_bigrams) ** 2) * 2
+                        bigram_penalty = (bigram_count / total_bigrams) * 2 + \
+                            ((bigram_count / total_bigrams) ** 2) * 20
                         min_c = max([word_idx-1,0])
-                        for ci in range(min_c, word_idx+1):
+                        for ci in range(min_c+1, word_idx+1):
                             if ci >= reward.shape[1]:
                                 continue
                             reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive
@@ -1457,11 +1457,11 @@ while True:
                     trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
                     if trigram_count > 1:
                         #.1 is transition of loss importance. yields .03 from first loss, .03 from second loss
-                        trigram_penalty = (trigram_count / total_trigrams) * .3 + \
-                            ((trigram_count / total_trigrams) ** 2) * 3
+                        trigram_penalty = (trigram_count / total_trigrams) * 3 + \
+                            ((trigram_count / total_trigrams) ** 2) * 30
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
-                        for ci in range(min_c, word_idx + 2):
+                        for ci in range(min_c+1, word_idx + 2):
                             if ci >= reward.shape[1]:
                                 continue
                             reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive
