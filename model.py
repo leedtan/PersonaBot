@@ -778,7 +778,8 @@ class Decoder(NN.Module):
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask
-            log_prob = out.sum() / mask.sum()
+            out_loss = -T.pow(T.abs(out)/3,1.5)
+            log_prob = out_loss.sum() / mask.sum()
             if wds_reconstruct is not None:
                 
                 reconstruct_loss = ((reconstruct.view(
