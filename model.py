@@ -222,6 +222,8 @@ class Context(NN.Module):
 
         # Use @ctx and @ctx_mask to attend over the attended words (TODO refine description.....)
         wd_sent_attended, wd_sent_weights = self.attn_sent(wd_attended, ctx, ctx_mask)
+        if str_sentences is not None:
+            plot_attention(wd_sent_weights, str_sentences, rolledup=True, print_path="attention/sentence_attention_%d.png")
 
         ctx = T.cat((ctx, wd_sent_attended),2)
         
@@ -762,8 +764,6 @@ class Decoder(NN.Module):
         
         embed = T.cat((embed, attn),3)
         attn, attn_weights = self.AttentionDecoderCtx(ctx_for_attn, embed, ctx_mask)
-        if str_sentences is not None:
-            plot_attention(attn_weights.transpose(1, 2), str_sentences, print_path="attention/decoder_attention_%d.png")
 
         self.attn2 = attn
         embed = T.cat((embed, attn),3)

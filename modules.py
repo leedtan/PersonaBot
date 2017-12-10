@@ -409,7 +409,7 @@ def join_sentence(str_array):
             out += " "
     return out
 
-def plot_attention(attn_weight, attended_over=None, mask=None, print_path="output/attention_elem_%d.png"):
+def plot_attention(attn_weight, attended_over=None, mask=None, rolledup=False, print_path="output/attention_elem_%d.png"):
     """
     :param attn_weight: batch_size x elem_num x elem_num
     :param attended_over: batch_size x elem_num
@@ -425,16 +425,61 @@ def plot_attention(attn_weight, attended_over=None, mask=None, print_path="outpu
     joint_sentences = [[join_sentence(attended_over[batch_elem][sentence_elem][:-1]) for sentence_elem in range(elem_num)] for batch_elem in range(batch_size)]
 
     elem = 0
+    if not rolledup:
+        for batch_elem in range(batch_size):
+            for sentence_elem in range(elem_num - 1):
+                elem += 1
+                str_convers = attended_over[batch_elem][sentence_elem]
+                convers_size = len(str_convers)
+                # print(attn_weight[batch_elem,:,:,:convers_size].sum(0), attn_weight[batch_elem,:,:,:convers_size].sum(1), attn_weight[batch_elem,:,:,:convers_size].sum(2))
+                matrix = attn_weight[batch_elem, :, sentence_elem, :convers_size].squeeze()[
+                         sentence_elem + 1:].cpu().data.numpy()
+                fig, ax = plt.subplots()
+                # plt.gcf().subplots_adjust(bottom=0.15)
+                heatmap = ax.pcolor(matrix, cmap=plt.cm.Blues, alpha=0.8, vmin=matrix.min(), vmax=matrix.max())
 
-    for batch_elem in range(batch_size):
-        for sentence_elem in range(elem_num - 1):
-            elem += 1
-            str_convers = attended_over[batch_elem][sentence_elem]
-            convers_size = len(str_convers)
-            #print(attn_weight[batch_elem,:,:,:convers_size].sum(0), attn_weight[batch_elem,:,:,:convers_size].sum(1), attn_weight[batch_elem,:,:,:convers_size].sum(2))
-            matrix = attn_weight[batch_elem, :, sentence_elem, :convers_size].squeeze()[sentence_elem + 1:].cpu().data.numpy()
+                # Format
+                fig = plt.gcf()
+
+                fig.set_size_inches(8, 11)
+
+                # turn off the frame
+                ax.set_frame_on(False)
+
+                # put the major ticks at the middle of each cell
+                ax.set_yticks(np.arange(convers_size) + 0.5, minor=False)
+                ax.set_xticks(np.arange(convers_size) + 0.5, minor=False)
+                plt.tick_params(axis='both', which='major', labelsize=8)
+                # want a more natural, table-like display
+                ax.invert_yaxis()
+                ax.xaxis.tick_top()
+
+                # note I could have used nba_sort.columns but made "labels" instead
+                ax.set_xticklabels(str_convers, minor=False)
+                ax.set_yticklabels(joint_sentences[batch_elem][sentence_elem + 1:], minor=False)
+                # rotate the
+                plt.xticks(rotation=90)
+                plt.yticks(rotation=45)
+                plt.tight_layout()
+
+                ax.grid(False)
+
+                # Turn off all the ticks
+                ax = plt.gca()
+
+                for t in ax.xaxis.get_major_ticks():
+                    t.tick1On = False
+                    t.tick2On = False
+                for t in ax.yaxis.get_major_ticks():
+                    t.tick1On = False
+                    t.tick2On = False
+
+                plt.savefig(print_path % (elem + 1))
+                plt.close()
+    else:
+        for batch_elem in range(batch_size):
+            matrix = attn_weight[batch_elem].squeeze().cpu().data.numpy()
             fig, ax = plt.subplots()
-            # plt.gcf().subplots_adjust(bottom=0.15)
             heatmap = ax.pcolor(matrix, cmap=plt.cm.Blues, alpha=0.8, vmin=matrix.min(), vmax=matrix.max())
 
             # Format
@@ -446,16 +491,16 @@ def plot_attention(attn_weight, attended_over=None, mask=None, print_path="outpu
             ax.set_frame_on(False)
 
             # put the major ticks at the middle of each cell
-            ax.set_yticks(np.arange(convers_size) + 0.5, minor=False)
-            ax.set_xticks(np.arange(convers_size) + 0.5, minor=False)
+            ax.set_yticks(np.arange(matrix.shape[0]) + 0.5, minor=False)
+            ax.set_xticks(np.arange(matrix.shape[1]) + 0.5, minor=False)
             plt.tick_params(axis='both', which='major', labelsize=8)
             # want a more natural, table-like display
             ax.invert_yaxis()
             ax.xaxis.tick_top()
 
             # note I could have used nba_sort.columns but made "labels" instead
-            ax.set_xticklabels(str_convers, minor=False)
-            ax.set_yticklabels(joint_sentences[batch_elem][sentence_elem + 1:], minor=False)
+            ax.set_xticklabels(joint_sentences[batch_elem][:-1], minor=False)
+            ax.set_yticklabels(joint_sentences[batch_elem][1:], minor=False)
             # rotate the
             plt.xticks(rotation=90)
             plt.yticks(rotation=45)
