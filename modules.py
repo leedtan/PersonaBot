@@ -11,6 +11,9 @@ import matplotlib.pyplot as PL
 from PIL import Image
 import matplotlib
 import pickle
+import matplotlib.pyplot as plt
+import sys
+import nltk
 
 matplotlib.use('Agg')
 matplotlib.rcParams.update({'font.size': 11})
@@ -356,7 +359,6 @@ def init_glove(word_emb, vcb, ivcb, dataroot):
     print("Match words in glove : " + str(match))
     return emb
 
-
 def round_robin_dataloader(dataloaders):
     dataloader_iters = [iter(dataloader) for dataloader in dataloaders]
     i = 0
@@ -370,66 +372,106 @@ def round_robin_dataloader(dataloaders):
         i = (i + 1) % len(dataloaders)
         yield item
 
-def plot_attention(attn_weight, attended_over=None, print_path="output/attention_elem_%d.png"):
-    """
+def batch_to_string_sentence(words_padded, lengths, dataset):
+    batch_size = lengths.size(0)
+    max_turn = lengths.size(1)
 
+    out = []
+
+    for batch_elem in range(batch_size):
+        batch_string = []
+        for turn in range(max_turn):
+            if lengths[batch_elem,turn] == 0:
+                break
+            batch_string += [words_padded[batch_elem,turn,:lengths[batch_elem,turn]].cpu().numpy()]
+
+        list_list_string = dataset.translate_item(None, None, batch_string)[2]
+        sentences = []
+
+        for list_string in list_list_string:
+            sentence = []
+            for i in range(0, len(list_string)):
+                sentence += [list_string[i]]
+
+            sentences += [sentence]
+
+        out += [sentences]
+
+    return out
+
+def join_sentence(str_array):
+    out = ""
+    for i in range(1, len(str_array)):
+        out += str_array[i]
+        if i % 6 == 5:
+            out += "\n"
+        else:
+            out += " "
+    return out
+
+def plot_attention(attn_weight, attended_over=None, mask=None, print_path="output/attention_elem_%d.png"):
+    """
     :param attn_weight: batch_size x elem_num x elem_num
     :param attended_over: batch_size x elem_num
     :param print_path: path that can work with % (batch_elem)
     """
+    # print(mask.size())
+    # print(mask[0].squeeze().sum(2))
+
+    #print(attn_weight[0].squeeze().sum(2), attn_weight[0].squeeze().sum(2)[0])
     elem_num = attn_weight.size(1)
     batch_size = attn_weight.size(0)
 
-    if attended_over is None:
-        attended_over = np.expand_dims(np.arange(1, elem_num + 1, 1), 0).repeat(batch_size, 0)
+    joint_sentences = [[join_sentence(attended_over[batch_elem][sentence_elem][:-1]) for sentence_elem in range(elem_num)] for batch_elem in range(batch_size)]
+
+    elem = 0
 
     for batch_elem in range(batch_size):
-        str_convers = attended_over[batch_elem]
-        convers_size = len(str_convers)
-        matrix = attn_weight[batch_elem].squeeze()[:convers_size, :convers_size].cpu().data.numpy()
+        for sentence_elem in range(elem_num - 1):
+            elem += 1
+            str_convers = attended_over[batch_elem][sentence_elem]
+            convers_size = len(str_convers)
+            #print(attn_weight[batch_elem,:,:,:convers_size].sum(0), attn_weight[batch_elem,:,:,:convers_size].sum(1), attn_weight[batch_elem,:,:,:convers_size].sum(2))
+            matrix = attn_weight[batch_elem, :, sentence_elem, :convers_size].squeeze()[sentence_elem + 1:].cpu().data.numpy()
+            fig, ax = plt.subplots()
+            # plt.gcf().subplots_adjust(bottom=0.15)
+            heatmap = ax.pcolor(matrix, cmap=plt.cm.Blues, alpha=0.8, vmin=matrix.min(), vmax=matrix.max())
 
-        fig, ax = plt.subplots()
-        # plt.gcf().subplots_adjust(bottom=0.15)
-        heatmap = ax.pcolor(matrix, cmap=plt.cm.Blues, alpha=0.8)
+            # Format
+            fig = plt.gcf()
 
-        # Format
-        fig = plt.gcf()
+            fig.set_size_inches(8, 11)
 
-        fig.set_size_inches(8, 11)
+            # turn off the frame
+            ax.set_frame_on(False)
 
-        # turn off the frame
-        ax.set_frame_on(False)
+            # put the major ticks at the middle of each cell
+            ax.set_yticks(np.arange(convers_size) + 0.5, minor=False)
+            ax.set_xticks(np.arange(convers_size) + 0.5, minor=False)
+            plt.tick_params(axis='both', which='major', labelsize=8)
+            # want a more natural, table-like display
+            ax.invert_yaxis()
+            ax.xaxis.tick_top()
 
-        # put the major ticks at the middle of each cell
-        ax.set_yticks(np.arange(convers_size) + 0.5, minor=False)
-        ax.set_xticks(np.arange(convers_size) + 0.5, minor=False)
-        plt.tick_params(axis='both', which='major', labelsize=8)
-        # want a more natural, table-like display
-        ax.invert_yaxis()
-        ax.xaxis.tick_top()
+            # note I could have used nba_sort.columns but made "labels" instead
+            ax.set_xticklabels(str_convers, minor=False)
+            ax.set_yticklabels(joint_sentences[batch_elem][sentence_elem + 1:], minor=False)
+            # rotate the
+            plt.xticks(rotation=90)
+            plt.yticks(rotation=45)
+            plt.tight_layout()
 
-        # note I could have used nba_sort.columns but made "labels" instead
-        ax.set_xticklabels(attended_over[batch_elem], minor=False)
-        ax.set_yticklabels(attended_over[batch_elem], minor=False)
+            ax.grid(False)
 
-        ax.set_xlabel("Attend Over :")
-        ax.set_ylabel("Element : ")
-        # rotate the
-        plt.xticks(rotation=90)
-        # plt.yticks(rotation=90)
-        plt.tight_layout()
+            # Turn off all the ticks
+            ax = plt.gca()
 
-        ax.grid(False)
+            for t in ax.xaxis.get_major_ticks():
+                t.tick1On = False
+                t.tick2On = False
+            for t in ax.yaxis.get_major_ticks():
+                t.tick1On = False
+                t.tick2On = False
 
-        # Turn off all the ticks
-        ax = plt.gca()
-
-        for t in ax.xaxis.get_major_ticks():
-            t.tick1On = False
-            t.tick2On = False
-        for t in ax.yaxis.get_major_ticks():
-            t.tick1On = False
-            t.tick2On = False
-
-        plt.savefig(print_path % (batch_elem + 1))
-        plt.close()
+            plt.savefig(print_path % (elem + 1))
+            plt.close()
