@@ -531,11 +531,18 @@ class AttentionDecoderCtx(Attention):
         
         attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
             batch_size, num_turns_ctx, num_turns_ctx, num_wds)
+        #Batch, conversation index head, conversation index context, word (head)
+        
+        attn_raw = attn_raw.permute(0,1,3,2).contiguous()
+        #Batch, conversation index head,  word (head), conversation index context
         
         attn_raw = weighted_softmax(
-                attn_raw.view(batch_size * num_turns_ctx * num_turns_ctx, num_wds),
-                mask.view(batch_size*num_turns_ctx * num_turns_ctx, num_wds)).view(
-                        batch_size, num_turns_ctx, num_turns_ctx, num_wds, 1)
+                attn_raw.view(batch_size * num_turns_ctx * num_wds, num_turns_ctx),
+                mask.view(batch_size*num_turns_ctx * num_wds, num_turns_ctx)).view(
+                        batch_size, num_turns_ctx, num_wds, num_turns_ctx, 1)
+        
+        attn_raw = attn_raw.permute(0,1,3,2,4).contiguous()
+        
         at_weighted_sent = attn_raw * attn_ctx_expanded.view(
                         batch_size, num_turns_ctx, num_turns_ctx, num_wds, -1)
         at_weighted_sent = at_weighted_sent.sum(2)

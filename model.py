@@ -532,11 +532,18 @@ class AttentionDecoderCtx(Attention):
         
         attn_raw = self.F_attn(T.cat((attn_head_expanded,attn_ctx_expanded),1)).view(
             batch_size, num_turns_ctx, num_turns_ctx, num_wds)
+        #Batch, conversation index head, conversation index context, word (head)
+        
+        attn_raw = attn_raw.permute(0,1,3,2).contiguous()
+        #Batch, conversation index head,  word (head), conversation index context
         
         attn_raw = weighted_softmax(
-                attn_raw.view(batch_size * num_turns_ctx * num_turns_ctx, num_wds),
-                mask.view(batch_size*num_turns_ctx * num_turns_ctx, num_wds)).view(
-                        batch_size, num_turns_ctx, num_turns_ctx, num_wds, 1)
+                attn_raw.view(batch_size * num_turns_ctx * num_wds, num_turns_ctx),
+                mask.view(batch_size*num_turns_ctx * num_wds, num_turns_ctx)).view(
+                        batch_size, num_turns_ctx, num_wds, num_turns_ctx, 1)
+        
+        attn_raw = attn_raw.permute(0,1,3,2,4).contiguous()
+        
         at_weighted_sent = attn_raw * attn_ctx_expanded.view(
                         batch_size, num_turns_ctx, num_turns_ctx, num_wds, -1)
         at_weighted_sent = at_weighted_sent.sum(2)
@@ -1456,7 +1463,7 @@ while True:
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
                         #.1 is transition. yields .02, and .02
-                        bigram_penalty = (bigram_count / total_bigrams) * .2 + \
+                        bigram_penalty = (bigram_count / total_bigrams) * .6 + \
                             ((bigram_count / total_bigrams) ** 2) * 2
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
@@ -1470,7 +1477,7 @@ while True:
                     trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
                     if trigram_count > 1:
                         #.1 is transition of loss importance. yields .03 from first loss, .03 from second loss
-                        trigram_penalty = (trigram_count / total_trigrams) * .3 + \
+                        trigram_penalty = (trigram_count / total_trigrams) * 1. + \
                             ((trigram_count / total_trigrams) ** 2) * 3
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
