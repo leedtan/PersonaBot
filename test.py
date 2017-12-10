@@ -2,6 +2,7 @@
 from torch.nn import Parameter
 from functools import wraps
 from nltk.translate import bleu_score
+import nltk
 
 import time
 import torch as T
@@ -952,6 +953,7 @@ print(args)
 
 datasets = []
 dataloaders = []
+subdirs = []
 for subdir in os.listdir(args.dataroot):
     print('Loading dataset:', subdir)
     dataset = UbuntuDialogDataset(os.path.join(args.dataroot, subdir),
@@ -967,13 +969,12 @@ for subdir in os.listdir(args.dataroot):
     # The only difference between datasets are the samples.
     dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
     dataloaders.append(dataloader)
+    subdirs.append(subdir)
 
 print('Checking consistency...')
 for dataset in datasets:
     assert all(w1 == w2 for w1, w2 in zip(datasets[0].vocab, dataset.vocab))
     assert all(u1 == u2 for u1, u2 in zip(datasets[0].users, dataset.users))
-
-dataloader = round_robin_dataloader(dataloaders)
 
 
 extra_penalty = np.zeros(args.max_sentence_length_allowed+1)
@@ -1097,95 +1098,103 @@ def enable_eval(sub_modules):
 opt = T.optim.Adam(params, lr=args.lr)
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
-adv_style = 0
-scatter_entropy_freq = 200
-time_train = 0
-time_decode = 0
-epoch += 1
-for item in dataloader:
-    turns, sentence_lengths_padded, speaker_padded, \
-        addressee_padded, words_padded, words_reverse_padded = item
-    wds = sentence_lengths_padded.sum()
-    max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
-    if sentence_lengths_padded.size(1) < 2:
-        continue
-    if wds > max_wds * .8 or wds < max_wds * .05:
-        continue
-    words_padded = tovar(words_padded)
-    words_reverse_padded = tovar(words_reverse_padded)
-    speaker_padded = tovar(speaker_padded)
-    
-    #enable_train([user_emb, word_emb, enc, context, decoder])
-    #SO far not used
-    #addressee_padded = tovar(addressee_padded)
-    #addres_b = user_emb(addressee_padded)
-    sentence_lengths_padded = cuda(sentence_lengths_padded)
-    turns = cuda(turns)
-    
-    batch_size = turns.size()[0]
-    max_turns = words_padded.size()[1]
-    max_words = words_padded.size()[2]
-    #batch, turns in a sample, words in a message, embedding_dim
-    wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
-    #SO FAR NOT USED:
-    #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
-    #batch, turns in a sample, embedding_dim
-    usrs_b = user_emb(speaker_padded)
+for subdir, dataloader in zip(subdir, dataloaders):
+    adv_style = 0
+    scatter_entropy_freq = 200
+    time_train = 0
+    time_decode = 0
+    epoch += 1
 
-    # Not sure why these two statements are here...
-    max_turns = turns.max()
-    max_words = wds_b.size()[2]
+    sum_ppl = 0
+    count_ppl = 0
+    ngram_counts = [Counter() for _ in range(3)]
+    for item in dataloader:
+        turns, sentence_lengths_padded, speaker_padded, \
+            addressee_padded, words_padded, words_reverse_padded = item
+        wds = sentence_lengths_padded.sum()
+        max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
+        if sentence_lengths_padded.size(1) < 2:
+            continue
+        if wds > max_wds * .8 or wds < max_wds * .05:
+            continue
+        words_padded = tovar(words_padded)
+        words_reverse_padded = tovar(words_reverse_padded)
+        speaker_padded = tovar(speaker_padded)
+        
+        #enable_train([user_emb, word_emb, enc, context, decoder])
+        #SO far not used
+        #addressee_padded = tovar(addressee_padded)
+        #addres_b = user_emb(addressee_padded)
+        sentence_lengths_padded = cuda(sentence_lengths_padded)
+        turns = cuda(turns)
+        
+        batch_size = turns.size()[0]
+        max_turns = words_padded.size()[1]
+        max_words = words_padded.size()[2]
+        #batch, turns in a sample, words in a message, embedding_dim
+        wds_b = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+        #SO FAR NOT USED:
+        #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+        #batch, turns in a sample, embedding_dim
+        usrs_b = user_emb(speaker_padded)
 
-    # Get the encoding vector for each sentence (@encodings), as well as
-    # annotation vectors for each word in each sentence (@wds_h) so that we
-    # can attend later.
-    # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
-    # users, and a batch of sentence lengths.
-    encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),usrs_b.view(
-            batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
+        # Not sure why these two statements are here...
+        max_turns = turns.max()
+        max_words = wds_b.size()[2]
 
-    assert np.all(~np.isnan(tonumpy(encodings)))
-    assert np.all(~np.isnan(tonumpy(wds_h)))
-    # Do the same for word-embedding, user-embedding, and encoder network
-    encodings = encodings.view(batch_size, max_turns, -1)
-    ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
+        # Get the encoding vector for each sentence (@encodings), as well as
+        # annotation vectors for each word in each sentence (@wds_h) so that we
+        # can attend later.
+        # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
+        # users, and a batch of sentence lengths.
+        encodings, wds_h = enc(wds_b.view(batch_size * max_turns, max_words, size_wd),usrs_b.view(
+                batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
 
-    # Do the same for everything except the decoder
-    max_output_words = sentence_lengths_padded[:, 1:].max()
-    wds_b_decode = wds_b[:,1:,:max_output_words]
-    wds_b_reconstruct = T.cat((
-            wds_b_decode[:,:,1:,:], cuda(T.zeros(wds_b_decode.size()[0], 
-            wds_b_decode.size()[1], 1, wds_b_decode.size()[3]))),2).contiguous()
-    usrs_b_decode = usrs_b[:,1:]
-    words_flat = words_padded[:,1:,:max_output_words].contiguous()
-    prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_b_decode,
-                             usrs_b_decode, sentence_lengths_padded[:,1:], 
-                             words_flat, wds_b_reconstruct = wds_b_reconstruct)
+        assert np.all(~np.isnan(tonumpy(encodings)))
+        assert np.all(~np.isnan(tonumpy(wds_h)))
+        # Do the same for word-embedding, user-embedding, and encoder network
+        encodings = encodings.view(batch_size, max_turns, -1)
+        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs_b)
 
-    #print(loss, grad_norm)
-    '''
-    if itr % 100 == 0:
-        print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
-    if np.any(np.isnan(tonumpy(loss))):
-        loss_nan = 1
-        print('LOSS NAN')
-        raise ValueError
-        continue
-    if np.any(np.isnan(tonumpy(reg))):
-        reg_nan = 1
-        print('REG NAN')
-        raise ValueError
-        continue
-    if np.any(np.isnan(tonumpy(grad_norm))):
-        grad_nan = 1
-        print('grad_norm NAN')
-        raise ValueError
-        continue
-    #print('Grad norm', grad_norm)
-    '''
+        # Do the same for everything except the decoder
+        max_output_words = sentence_lengths_padded[:, 1:].max()
+        wds_b_decode = wds_b[:,1:,:max_output_words]
+        wds_b_reconstruct = T.cat((
+                wds_b_decode[:,:,1:,:], cuda(T.zeros(wds_b_decode.size()[0], 
+                wds_b_decode.size()[1], 1, wds_b_decode.size()[3]))),2).contiguous()
+        usrs_b_decode = usrs_b[:,1:]
+        words_flat = words_padded[:,1:,:max_output_words].contiguous()
+        prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_b_decode,
+                                 usrs_b_decode, sentence_lengths_padded[:,1:], 
+                                 words_flat, wds_b_reconstruct = wds_b_reconstruct)
+        loss = -log_prob
 
-    # Train with Policy Gradient on BLEU scores once for a while.
-    if itr % 10 == 0 and itr > 100:
+        #print(loss, grad_norm)
+        '''
+        if itr % 100 == 0:
+            print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
+        if np.any(np.isnan(tonumpy(loss))):
+            loss_nan = 1
+            print('LOSS NAN')
+            raise ValueError
+            continue
+        if np.any(np.isnan(tonumpy(reg))):
+            reg_nan = 1
+            print('REG NAN')
+            raise ValueError
+            continue
+        if np.any(np.isnan(tonumpy(grad_norm))):
+            grad_nan = 1
+            print('grad_norm NAN')
+            raise ValueError
+            continue
+        #print('Grad norm', grad_norm)
+        '''
+
+        sum_ppl += np.exp(np.asscalar(tonumpy(loss)))
+        count_ppl += 1
+
+        # Train with Policy Gradient on BLEU scores once for a while.
         start_decode = time.time()
         #enable_eval([user_emb, word_emb, enc, context, decoder])
         greedy_responses, _ = decoder.greedyGenerateBleu(
@@ -1263,10 +1272,22 @@ for item in dataloader:
                     end_idx = end_idx[0]
                     if end_idx > 0:
                         speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:end_idx+1])
+                        for _n in range(3):
+                            ngram_counts[_n].update(nltk.ngrams(words[0], _n + 1))
                         print('Fake:', speaker[0], ' '.join(words[0]))
                         printed = 1
             if printed == 0:
                 speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:])
+                for _n in range(3):
+                    ngram_counts[_n].update(nltk.ngrams(words[0], _n + 1))
                 print('Fake:', speaker[0], ' '.join(words[0]))
             if words_padded_decode[i, 1].sum() == 0:
                 break
+
+    print('Dataset %s' % subdir)
+    print('Average PPL: %f' % (sum_ppl / count_ppl))
+    ngram_total = [sum(c.values()) for c in ngram_counts]
+    for i in range(3):
+        print('Most common %d-gram' % (i + 1))
+        for k, v in ngram_counts[i].most_common(5):
+            print(k, v / ngram_total[i])

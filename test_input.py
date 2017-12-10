@@ -1240,7 +1240,7 @@ while True:
     #enable_eval([user_emb, word_emb, enc, context, decoder])
     greedy_responses, _ = decoder.greedyGenerateBleu(
             ctx[:1,:-1,:].view(-1, size_context + size_attn),
-              usrs_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
+              usrs_decode[:1,:,:].view(-1, size_usr), word_emb, dataset, Bleu=False)
     greedy_responses = greedy_responses[-1:]
     hypothesis = tonumpy(greedy_responses)
     
