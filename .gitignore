@@ -3,9 +3,3 @@ data/
 *.pkl
 *.pyc
 logs/
-attention/
-plot/
-trained_models/
-OpenSubtitles-dialogs-small/
-glove/
-

@@ -162,7 +162,7 @@ class Context(NN.Module):
         return initial_state
 
     def forward(self, sent_encs, turns, sentence_lengths_padded,
-                wds_h, usrs, initial_state=None, str_sentences=None):
+                wds_h, usrs, initial_state=None):
             # attn: batch_size, max_turns, sentence_encoding_size
         sent_encs = cuda(sent_encs)
         turns = cuda(turns)
@@ -193,7 +193,7 @@ class Context(NN.Module):
                             ctx_mask[i_b, i_head, i_sent] = 0
         ctx_mask = tovar(ctx_mask)
         ctx_attended = self.attn_ctx(embed, embed, ctx_mask)
-
+        
         ctx = embed + ctx_attended
         #ctx = T.cat((embed, ctx_attended),2)
         
@@ -216,13 +216,11 @@ class Context(NN.Module):
                             wd_mask[i_b, i_head, i_sent, i_wd] = 0
         wd_mask = tovar(wd_mask)
         # (batch_size, num_turns_attended_with, num_turns_attended_over, size_attn)
-        wd_attended, wd_attn_weights = self.attn_wd(wds_h_attn, ctx, wd_mask)
-        if str_sentences is not None:
-            plot_attention(wd_attn_weights, str_sentences, mask=wd_mask, print_path="attention/wd_attention_%d.png")
-
+        wd_attended = self.attn_wd(wds_h_attn, ctx, wd_mask)
+        
         # Use @ctx and @ctx_mask to attend over the attended words (TODO refine description.....)
-        wd_sent_attended, wd_sent_weights = self.attn_sent(wd_attended, ctx, ctx_mask)
-
+        wd_sent_attended = self.attn_sent(wd_attended, ctx, ctx_mask)
+        
         ctx = T.cat((ctx, wd_sent_attended),2)
         
         return ctx, h.contiguous()
@@ -397,7 +395,7 @@ class WdAttention(Attention):
                         batch_size, num_turns_head, num_turns_ctx, num_wds, -1)
         at_weighted_sent = at_weighted_sent.sum(3)
         
-        return at_weighted_sent, attn_raw
+        return at_weighted_sent
 
 class RolledUpAttention(Attention):
     '''
@@ -436,7 +434,7 @@ class RolledUpAttention(Attention):
                         batch_size, num_turns_head, num_turns_ctx, -1)
         at_weighted_sent = at_weighted_sent.sum(2)
         
-        return at_weighted_sent, attn_raw
+        return at_weighted_sent
     
 class SeltAttentionWd(Attention):
     '''
@@ -541,7 +539,7 @@ class AttentionDecoderCtx(Attention):
                         batch_size, num_turns_ctx, num_turns_ctx, num_wds, -1)
         at_weighted_sent = at_weighted_sent.sum(2)
         
-        return at_weighted_sent, attn_raw
+        return at_weighted_sent
     def test(self,context, heads, mask):
         num_turns_ctx, size_context = context.size()
         _, size_head = heads.size()
@@ -667,7 +665,7 @@ class Decoder(NN.Module):
         return initial_state
 
     def forward(self, context_encodings, wds_first_sentence_removed, usr_emb, sentence_lengths_padded, 
-                wd_target=None, initial_state=None, wds_reconstruct = None, str_sentences=None):
+                wd_target=None, initial_state=None, wds_reconstruct = None):
         '''
         Returns:
             If wd_target is None, returns a 4D tensor P
@@ -761,10 +759,7 @@ class Decoder(NN.Module):
         ctx_mask = tovar(ctx_mask)
         
         embed = T.cat((embed, attn),3)
-        attn, attn_weights = self.AttentionDecoderCtx(ctx_for_attn, embed, ctx_mask)
-        if str_sentences is not None:
-            plot_attention(attn_weights.transpose(1, 2), str_sentences, print_path="attention/decoder_attention_%d.png")
-
+        attn = self.AttentionDecoderCtx(ctx_for_attn, embed, ctx_mask)
         self.attn2 = attn
         embed = T.cat((embed, attn),3)
         embed = embed.view(-1, state_size + size_attn * 2)
@@ -917,8 +912,8 @@ class Decoder(NN.Module):
         return output, logprob
 
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
-parser.add_argument('--dataroot', type=str,default='OpenSubtitles-dialogs-small', help='Root of the data downloaded from github')
-parser.add_argument('--metaroot', type=str, default='opensub', help='Root of meta data')
+parser.add_argument('--dataroot', type=str,default='ubuntu', help='Root of the data downloaded from github')
+parser.add_argument('--metaroot', type=str, default='ubuntu-meta', help='Root of meta data')
 parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
@@ -955,7 +950,6 @@ parser.add_argument('--lambda_reconstruct', type=float, default=.1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
 parser.add_argument('--server', type=int, default=0)
-parser.add_argument('--plot-attention', action='store_true', help='Plot attention')
 
 args = parser.parse_args()
 if args.server == 1:
@@ -967,6 +961,7 @@ print(args)
 datasets = []
 dataloaders = []
 for subdir in os.listdir(args.dataroot):
+    print('Loading dataset:', subdir)
     dataset = UbuntuDialogDataset(os.path.join(args.dataroot, subdir),
                                   wordcount_pkl=args.metaroot + '/wordcount.pkl',
                                   usercount_pkl=args.metaroot + '/usercount.pkl',
@@ -980,7 +975,6 @@ for subdir in os.listdir(args.dataroot):
     # The only difference between datasets are the samples.
     dataloader = UbuntuDialogDataLoader(dataset, args.batchsize, num_workers=args.num_loader_workers)
     dataloaders.append(dataloader)
-    break
 
 print('Checking consistency...')
 for dataset in datasets:
@@ -1017,7 +1011,7 @@ else:
     candidates = [name for name in os.listdir(dirname) if name.startswith(filename_base)]
     latest_time = 0
     for cand in candidates:
-        mtime = os.path.getmtime(os.path.join(dirname, cand))
+        mtime = os.path.getmtime(cand)
         try:
             loaditer = int(cand[-8:])
         except ValueError:
@@ -1093,17 +1087,11 @@ adv_ctx_scales = []
 baseline = None
 if modelnameload:
     if len(modelnameload) > 0:
-        user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
-        word_emb = T.load('%s-word_emb-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
-        enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
-        context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
-        decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
-
-        print(user_emb)
-        print(word_emb)
-        print(enc)
-        print(context)
-        print(decoder)
+        user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations))
+        word_emb = T.load('%s-word_emb-%08d' % (modelnameload, args.loaditerations))
+        enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations))
+        context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations))
+        decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
 
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 named_params = sum([list(m.named_parameters())
@@ -1137,11 +1125,6 @@ while True:
         '''
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
-        if args.plot_attention:
-            list_stringify_sentence = batch_to_string_sentence(words_padded, sentence_lengths_padded, dataset)
-        else:
-            list_stringify_sentence = None
-
         wds = sentence_lengths_padded.sum()
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
         if sentence_lengths_padded.size(1) < 2:
@@ -1163,7 +1146,6 @@ while True:
         max_turns = words_padded.size()[1]
         max_words = words_padded.size()[2]
         #batch, turns in a sample, words in a message, embedding_dim
-
         wds = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
         #SO FAR NOT USED:
         #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
@@ -1214,8 +1196,7 @@ while True:
             wds_h = tovar((wds_h + tovar(wds_h_adv).view_as(wds_h)).data)
             
         encodings = encodings.view(batch_size, max_turns, -1)
-
-        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs, str_sentences=list_stringify_sentence)
+        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs)
 
         # Do the same for everything except the decoder
         if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
@@ -1238,7 +1219,7 @@ while True:
         words_flat = words_padded[:,1:,:max_output_words].contiguous()
         prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_first_sentence_removed,
                                  usrs_decode, sentence_lengths_padded[:,1:], 
-                                 words_flat, wds_reconstruct = wds_reconstruct, str_sentences=list_stringify_sentence)
+                                 words_flat, wds_reconstruct = wds_reconstruct)
 
         # Training with PPL
         loss = -log_prob
@@ -1596,6 +1577,7 @@ while True:
     #decoded = decoder(ctx[:, :-1:], wds_b[:, 1:, :], None,
     #                  usrs_b[:, 1:,], sentence_lengths_padded[:, 1:])
     #print(decoded)
+
 
 
 # Usage:
