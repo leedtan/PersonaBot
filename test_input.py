@@ -1087,11 +1087,11 @@ adv_ctx_scales = []
 baseline = None
 if modelnameload:
     if len(modelnameload) > 0:
-        user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations))
-        word_emb = T.load('%s-word_emb-%08d' % (modelnameload, args.loaditerations))
-        enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations))
-        context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations))
-        decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
+        user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
+        word_emb = T.load('%s-word_emb-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
+        enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
+        context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
+        decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations), map_location=lambda storage, loc: storage)
 
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 named_params = sum([list(m.named_parameters())

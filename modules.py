@@ -520,3 +520,4 @@ def plot_attention(attn_weight, attended_over=None, mask=None, rolledup=False, p
 
             plt.savefig(print_path % (elem + 1))
             plt.close()
+        sys.exit(0)
