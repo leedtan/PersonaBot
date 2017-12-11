@@ -789,8 +789,9 @@ class Decoder(NN.Module):
             out = self.softmax(decoder_out, target.view(-1))
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
-            out = out * mask
-            log_prob = out.sum() / mask.sum()
+            out = out * mask 
+            out_loss = -T.pow(T.abs(out)/3,1.3)
+            log_prob = out_loss.sum() / mask.sum()
             if wds_reconstruct is not None:
                 
                 reconstruct_loss = ((reconstruct.view(
@@ -948,7 +949,7 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
-parser.add_argument('--max_turns_allowed', type=int, default=8)
+parser.add_argument('--max_turns_allowed', type=int, default=16)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -1146,7 +1147,7 @@ while True:
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
         if sentence_lengths_padded.size(1) < 2:
             continue
-        if wds > max_wds * .8 or wds < max_wds * .05:
+        if wds > max_wds * .4 or wds < max_wds * .05:
             continue
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
@@ -1454,7 +1455,7 @@ while True:
                 for word_idx in range(1,lengths_gen[sentence_idx]):
                     unigram_count = batch_words[hypothesis[sentence_idx,word_idx]]
                     if unigram_count > 3:
-                        unigram_penalty = (unigram_count/total_words)**2
+                        unigram_penalty = (unigram_count/total_words)**2 * .2
                         reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive
                         tot_unigram_penalty += unigram_penalty * args.lambda_repetitive
             
@@ -1463,7 +1464,7 @@ while True:
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
                         #.1 is transition. yields .02, and .02
-                        bigram_penalty = (bigram_count / total_bigrams) * .6 + \
+                        bigram_penalty = (bigram_count / total_bigrams) * .2 + \
                             ((bigram_count / total_bigrams) ** 2) * 2
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
@@ -1477,7 +1478,7 @@ while True:
                     trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
                     if trigram_count > 1:
                         #.1 is transition of loss importance. yields .03 from first loss, .03 from second loss
-                        trigram_penalty = (trigram_count / total_trigrams) * 1. + \
+                        trigram_penalty = (trigram_count / total_trigrams) * .3 + \
                             ((trigram_count / total_trigrams) ** 2) * 3
                         min_c = max([word_idx-1,0])
                         #max_c = min([word_idx+1, reward.shape[1]])
