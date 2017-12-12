@@ -10,6 +10,10 @@ EOS = '<eos>'
 START = '<start>'
 UNKNOWN = '<unknown>'
 
+EXPLETIVES = [
+        'arse', 'ass', 'asshole', 'bastard', 'bitch', 'bollocks', 'child-fucker', 'crap', 'cunt', 'christ',
+        ]
+
 class UbuntuDialogDataset(Dataset):
     def __init__(self,
                  root='.',
@@ -135,6 +139,11 @@ class UbuntuDialogDataset(Dataset):
             for s in words:
                 while s[-1] == '':
                     s.pop(-1)
+
+        for word_list in words:
+            for i in range(len(word_list)):
+                if word_list[i] in EXPLETIVES:
+                    word_list[i] = '<expletive>'
 
         return addressee, speaker, words
 
