@@ -949,7 +949,7 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
-parser.add_argument('--max_turns_allowed', type=int, default=16)
+parser.add_argument('--max_turns_allowed', type=int, default=12)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=1)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -1147,7 +1147,7 @@ while True:
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
         if sentence_lengths_padded.size(1) < 2:
             continue
-        if wds > max_wds * .4 or wds < max_wds * .05:
+        if wds > max_wds * .6 or wds < max_wds * .05:
             continue
         words_padded = tovar(words_padded)
         words_reverse_padded = tovar(words_reverse_padded)
