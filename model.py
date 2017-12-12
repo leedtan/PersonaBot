@@ -790,7 +790,7 @@ class Decoder(NN.Module):
             out = out.view(batch_size, maxlenbatch, maxwordsmessage)
             mask = (target != 0).float()
             out = out * mask 
-            out_loss = -T.pow(T.abs(out)/3,1.3)
+            out_loss = -T.pow(T.abs(out)/3,1.2)
             log_prob = out_loss.sum() / mask.sum()
             if wds_reconstruct is not None:
                 
@@ -1464,8 +1464,8 @@ while True:
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
                     if bigram_count > 2:
                         #.1 is transition. yields .02, and .02
-                        bigram_penalty = (bigram_count / total_bigrams) * .2 + \
-                            ((bigram_count / total_bigrams) ** 2) * 2
+                        bigram_penalty = (bigram_count / total_bigrams) * .1 + \
+                            ((bigram_count / total_bigrams) ** 2) * 1
                         min_c = max([word_idx-1,0])
                         for ci in range(min_c, word_idx+1):
                             if ci >= reward.shape[1]:
