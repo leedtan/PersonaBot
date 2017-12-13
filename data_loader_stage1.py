@@ -19,22 +19,22 @@ EXPLETIVES = ['arse',
                 'child-fucker',
                 'crap',
                 'cunt',
-                'Christ',
+                'christ',
                 'damn',
                 'fuck',
                 'goddamn',
                 'godsdamn',
                 'hell',
-                'Jesus',
+                'jesus',
                 'motherfucker',
                 'nigga',
                 'nigger',
                 'shit',
                 'shitass',
                 'twat',
-                'Whore',
-                'Slut',
-                'Skank'
+                'whore',
+                'slut',
+                'skank'
         ]
 
 
