@@ -10,9 +10,33 @@ EOS = '<eos>'
 START = '<start>'
 UNKNOWN = '<unknown>'
 
-EXPLETIVES = [
-        'arse', 'ass', 'asshole', 'bastard', 'bitch', 'bollocks', 'child-fucker', 'crap', 'cunt', 'christ',
+EXPLETIVES = ['arse',
+                'ass',
+                'asshole',
+                'bastard',
+                'bitch',
+                'bollocks',
+                'child-fucker',
+                'crap',
+                'cunt',
+                'Christ',
+                'damn',
+                'fuck',
+                'goddamn',
+                'godsdamn',
+                'hell',
+                'Jesus',
+                'motherfucker',
+                'nigga',
+                'nigger',
+                'shit',
+                'shitass',
+                'twat',
+                'Whore',
+                'Slut',
+                'Skank'
         ]
+
 
 class UbuntuDialogDataset(Dataset):
     def __init__(self,
