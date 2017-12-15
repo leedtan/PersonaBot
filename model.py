@@ -1454,7 +1454,7 @@ while True:
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(1,lengths_gen[sentence_idx]):
                     unigram_count = batch_words[hypothesis[sentence_idx,word_idx]]
-                    if unigram_count > 3:
+                    if unigram_count > 6:
                         unigram_penalty = (unigram_count/total_words)**2 * .1
                         reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive
                         tot_unigram_penalty += unigram_penalty * args.lambda_repetitive
@@ -1462,7 +1462,7 @@ while True:
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(0,lengths_gen[sentence_idx]):
                     bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
-                    if bigram_count > 2:
+                    if bigram_count > 4:
                         #.1 is transition. yields .02, and .02
                         bigram_penalty = (bigram_count / total_bigrams) * .05 + \
                             ((bigram_count / total_bigrams) ** 2) * .5
@@ -1476,7 +1476,7 @@ while True:
             for sentence_idx in range(hypothesis.shape[0]):
                 for word_idx in range(0,lengths_gen[sentence_idx]-1):
                     trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
-                    if trigram_count > 1:
+                    if trigram_count > 2:
                         #.1 is transition of loss importance. yields .03 from first loss, .03 from second loss
                         trigram_penalty = (trigram_count / total_trigrams) * .2 + \
                             ((trigram_count / total_trigrams) ** 2) * 2
