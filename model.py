@@ -8,14 +8,14 @@ import torch as T
 import torch.nn as NN
 import torch.nn.functional as F
 import torch.nn.init as INIT
-import tensorflow as TF
+import tensorflow as tf
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
+from tf.nn import bidirectional_dynamic_rnn, dynamic_rnn
 import numpy.random as RNG
-import tensorflow as TF     # for Tensorboard
+import tensorflow as tf     # for Tensorboard
 from numpy import rate
-
-
+from tf.nn.rnn_cell import BasicLSTMCell
+from tf.contrib.rnn import GRUCell
 import argparse, sys, datetime, pickle, os
 
 import matplotlib
@@ -78,6 +78,126 @@ class Dense(NN.Module):
         h = self.linear2(h)
         return T.cat((x, self.relu(h)),1)
 
+def encode_sentence(x, layers, size, lengths, cells):
+    prev_layer = x
+    for idx in range(layers):
+        prev_layer = bidirectional_dynamic_rnn(
+            cell_fw=cells[idx][0], cell_bw=cell_bw[idx][1],
+            inputs=prev_layer,
+            sequence_length=lengths,
+            initial_state_fw=None,
+            initial_state_bw=None,
+            dtype=None,
+            parallel_iterations=None,
+            swap_memory=False,
+            time_major=False,
+            scope=None
+            )
+    return prev_layer
+
+def encode_context(x, layers, size, lengths, cells):
+    prev_layer = x
+    for idx in range(layers):
+        prev_layer = dynamic_rnn(
+            cell=cells[idx],
+            inputs=prev_layer,
+            sequence_length=lengths,
+            initial_state=None,
+            dtype=None,
+            parallel_iterations=None,
+            swap_memory=False,
+            time_major=False,
+            scope=None
+            )
+    return prev_layer
+
+def decode(x, layers, size, lengths, cells):
+    prev_layer = x
+    for idx in range(layers):
+        prev_layer = dynamic_rnn(
+            cell=cells[idx],
+            inputs=prev_layer,
+            sequence_length=lengths,
+            initial_state=None,
+            dtype=None,
+            parallel_iterations=None,
+            swap_memory=False,
+            time_major=False,
+            scope=None
+            )
+    return prev_layer
+
+class Model():
+    def __init__(self, layers_enc=1, layers_ctx=1, layers_dec=1,
+                 size_usr = 32, size_wd = 32,
+                 size_enc=32, size_ctx=32, size_dec=32,
+                 num_wds = 8192,num_usrs = 1000)"
+        self.layers_enc = layers_enc
+        self.layers_ctx = layers_ctx
+        self.layers_dec = layers_dec
+        self.size_usr = size_usr
+        self.size_wd = size_wd
+        self.size_enc = size_enc
+        self.size_ctx = size_ctx
+        self.size_dec = size_dec
+        self.num_wds = num_wds
+        self.num_srs = num_usrs
+        
+        #Dimension orders: Batch, messages, words, embedding
+        
+        self.wd_ind = tf.placeholder(tf.int32, shape=(None,None, None))
+        self.usr_ind = tf.placeholder(tf.int32, shape=(None,None))
+        
+        self.max_wds = self.wd_ind.shape[-1]
+        
+        self.conv_lengths = tf.placeholder(tf.int32, shape=(None))
+        self.sentence_lengths = tf.placeholder(tf.int32, shape=(None,None))
+        
+        self.wd_mat = tf.Variable(1e-3*tf.random_normal([num_wds, size_wd]))
+        self.usr_mat = tf.Variable(1e-3*tf.random_normal([num_usrs, size_usr]))
+        
+        self.wd_emb = tf.nn.embedding_lookup(self.wd_mat, self.wd_ind)
+        self.usr_emb = tf.nn.embedding_lookup(self.usr_mat, self.usr_ind)
+        self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_wds,1] 
+        
+        self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
+        
+        self.sent_rnns = [[GRUCell(size_enc//2), GRUCell(size_enc//2)] for _ in range(layers_enc)]
+        self.ctx_rnns = [GRUCell(size_ctx) for _ in range(layers_ctx)]
+        self.dec_rnns = [GRUCell(size_dec) for _ in range(layers_dec)]
+        
+        
+        self.sentence_encs = encode_sentence(
+                x=self.wds_usrs, layers=layers_enc, size = size_enc, 
+                lengths=self.sentence_lengths, cells = self.sent_rnns)
+        
+        self.context_encs = encode_context(
+                x = self.sentence_encs, layers = layers_ctx, size = size_ctx,
+                lengths = self.conv_lengths, cells = self.ctx_rnns)
+        #batch, messages, (expansion needed), emb_dim
+        
+        self.dec_inputs = tf.concat((tf.expand_dims(self.context_encs, 2), self.wds_usrs), 3)
+        
+        self.decoder_out = decode(
+                x = self.dec_inputs, layers=layers_dec, size=size_dec,
+                lengths = sentence_lengths, cells = self.dec_rnns)
+        #decoder out is message0: message-1
+        self.decoder_out_for_ppl = tf.reshape(self.decoder_out[:,:-1,:,:],(-1, size_dec))
+        self.target = self.wd_ind[:,1:, :]
+        
+        self.ppl_loss = self.softmax(self.decoder_out_for_ppl, self.target)
+        
+        T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
+            decoder_out = embed
+            out = self.softmax(decoder_out, target.view(-1))
+            out = out.view(batch_size, maxlenbatch, maxwordsmessage)
+            mask = (target != 0).float()
+            out = out * mask 
+            out_loss = -T.pow(T.abs(out)/3,1.1)
+            log_prob = out_loss.sum() / mask.sum()
+        
+        
+        #self._enc_rnns = [tf.nn.rnn_cell.BasicLSTMCell(size_enc) for _ in range(layers_enc)]
 
 class Encoder(NN.Module):
     '''
@@ -951,7 +1071,7 @@ parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
 parser.add_argument('--max_turns_allowed', type=int, default=12)
 parser.add_argument('--num_loader_workers', type=int, default=4)
-parser.add_argument('--adversarial_sample', type=int, default=1)
+parser.add_argument('--adversarial_sample', type=int, default=0)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
 parser.add_argument('--ctx_gpu_id', type=int, default=0)
 parser.add_argument('--enc_gpu_id', type=int, default=0)
@@ -1050,7 +1170,7 @@ def logdirs(logdir, modelnamesave):
     return logdir
 log_train = logdirs(args.logdir, modelnamesave)
 
-train_writer = TF.summary.FileWriter(log_train)
+train_writer = tf.summary.FileWriter(log_train)
 
 adv_min_itr = 1000
 
@@ -1293,17 +1413,17 @@ while True:
             adv_emb_diffs.append(loss_adv - loss)
             adv_emb_scales.append(scale)
             train_writer.add_summary(
-                TF.Summary(value=[TF.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
+                tf.Summary(value=[tf.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
             adv_sent_diffs.append(loss_adv - loss)
             adv_sent_scales.append(scale)
             train_writer.add_summary(
-                TF.Summary(value=[TF.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
+                tf.Summary(value=[tf.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
         if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
             adv_ctx_diffs.append(loss_adv - loss)
             adv_ctx_scales.append(scale)
             train_writer.add_summary(
-                TF.Summary(value=[TF.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
+                tf.Summary(value=[tf.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
         mask = mask_4d(wds.size(), turns , sentence_lengths_padded)
         wds_dist = wds* mask
         mask = mask_3d(usrs.size(), turns)
@@ -1324,20 +1444,20 @@ while True:
         wds_h_std = float(np.nanstd(wds_h_dist))
         if itr % 10 == 0:
             train_writer.add_summary(
-                    TF.Summary(
+                    tf.Summary(
                         value=[
-                            TF.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((8, tonumpy(loss))))),
-                            TF.Summary.Value(tag='loss', simple_value=loss),
-                            TF.Summary.Value(tag='reg', simple_value=reg),
-                            TF.Summary.Value(tag='time_train', simple_value=time_train),
-                            TF.Summary.Value(tag='time_decode', simple_value=time_decode),
-                            TF.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                            TF.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
-                            TF.Summary.Value(tag='wd_std', simple_value=wd_std),
-                            TF.Summary.Value(tag='usr_std', simple_value=usr_std),
-                            TF.Summary.Value(tag='sent_std', simple_value=sent_std),
-                            TF.Summary.Value(tag='ctx_std', simple_value=ctx_std),
-                            TF.Summary.Value(tag='wds_h_std', simple_value=wds_h_std),
+                            tf.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((8, tonumpy(loss))))),
+                            tf.Summary.Value(tag='loss', simple_value=loss),
+                            tf.Summary.Value(tag='reg', simple_value=reg),
+                            tf.Summary.Value(tag='time_train', simple_value=time_train),
+                            tf.Summary.Value(tag='time_decode', simple_value=time_decode),
+                            tf.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                            tf.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
+                            tf.Summary.Value(tag='wd_std', simple_value=wd_std),
+                            tf.Summary.Value(tag='usr_std', simple_value=usr_std),
+                            tf.Summary.Value(tag='sent_std', simple_value=sent_std),
+                            tf.Summary.Value(tag='ctx_std', simple_value=ctx_std),
+                            tf.Summary.Value(tag='wds_h_std', simple_value=wds_h_std),
                             
                             ]
                         ),
@@ -1357,9 +1477,9 @@ while True:
             #        Entropy_per_word.mean(), Entropy.std(), Entropy.max(), Entropy.min())
             E_mean = np.nanmean(Entropy_per_word)
             train_writer.add_summary(
-                TF.Summary(
+                tf.Summary(
                     value=[
-                        TF.Summary.Value(tag='Entropy_mean', simple_value=E_mean)
+                        tf.Summary.Value(tag='Entropy_mean', simple_value=E_mean)
                         ]
                     ),
                 itr
@@ -1372,12 +1492,12 @@ while True:
             
             #E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
             train_writer.add_summary(
-                TF.Summary(
+                tf.Summary(
                     value=[
-                        TF.Summary.Value(tag='Entropy_mean', simple_value=E_mean),
-                        TF.Summary.Value(tag='Entropy_std', simple_value=E_std),
-                        TF.Summary.Value(tag='Entropy_max', simple_value=E_max),
-                        TF.Summary.Value(tag='Entropy_min', simple_value=E_min),
+                        tf.Summary.Value(tag='Entropy_mean', simple_value=E_mean),
+                        tf.Summary.Value(tag='Entropy_std', simple_value=E_std),
+                        tf.Summary.Value(tag='Entropy_max', simple_value=E_max),
+                        tf.Summary.Value(tag='Entropy_min', simple_value=E_min),
                         ]
                     ),
                 itr
@@ -1504,13 +1624,13 @@ while True:
             if itr % 10 == 0:
                 print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
             train_writer.add_summary(
-                    TF.Summary(
+                    tf.Summary(
                         value=[
-                            TF.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscoresplot)),
-                            TF.Summary.Value(tag='pg_grad_norm', simple_value=pg_grad_norm),
-                            TF.Summary.Value(tag='unigram_penalty', simple_value=tot_unigram_penalty),
-                            TF.Summary.Value(tag='bigram_penalty', simple_value=tot_bigram_penalty),
-                            TF.Summary.Value(tag='trigram_penalty', simple_value=tot_trigram_penalty),
+                            tf.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscoresplot)),
+                            tf.Summary.Value(tag='pg_grad_norm', simple_value=pg_grad_norm),
+                            tf.Summary.Value(tag='unigram_penalty', simple_value=tot_unigram_penalty),
+                            tf.Summary.Value(tag='bigram_penalty', simple_value=tot_bigram_penalty),
+                            tf.Summary.Value(tag='trigram_penalty', simple_value=tot_trigram_penalty),
                             ]
                         ),
                     itr
