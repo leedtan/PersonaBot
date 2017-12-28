@@ -10,12 +10,10 @@ import torch.nn.functional as F
 import torch.nn.init as INIT
 import tensorflow as tf
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from tf.nn import bidirectional_dynamic_rnn, dynamic_rnn
+from tensorflow import nn
 import numpy.random as RNG
-import tensorflow as tf     # for Tensorboard
 from numpy import rate
-from tf.nn.rnn_cell import BasicLSTMCell
-from tf.contrib.rnn import GRUCell
+from tensorflow.contrib.rnn import GRUCell
 import argparse, sys, datetime, pickle, os
 
 import matplotlib
@@ -34,6 +32,8 @@ from data_loader_stage1 import *
 
 from adv import *
 #from test import test
+tf.reset_default_graph()
+
 
 
 '''
@@ -81,29 +81,31 @@ class Dense(NN.Module):
 def encode_sentence(x, layers, size, lengths, cells):
     prev_layer = x
     for idx in range(layers):
-        prev_layer = bidirectional_dynamic_rnn(
-            cell_fw=cells[idx][0], cell_bw=cell_bw[idx][1],
+        h,c = nn.bidirectional_dynamic_rnn(
+            cell_fw=cells[idx][0], cell_bw=cells[idx][1],
             inputs=prev_layer,
             sequence_length=lengths,
             initial_state_fw=None,
             initial_state_bw=None,
-            dtype=None,
+            dtype=tf.float32,
             parallel_iterations=None,
             swap_memory=False,
             time_major=False,
             scope=None
             )
-    return prev_layer
+        prev_layer = tf.concat(h, -1)
+    output_layer = prev_layer[:,-1,:]
+    return output_layer
 
 def encode_context(x, layers, size, lengths, cells):
     prev_layer = x
     for idx in range(layers):
-        prev_layer = dynamic_rnn(
+        prev_layer,c = nn.dynamic_rnn(
             cell=cells[idx],
             inputs=prev_layer,
             sequence_length=lengths,
             initial_state=None,
-            dtype=None,
+            dtype=tf.float32,
             parallel_iterations=None,
             swap_memory=False,
             time_major=False,
@@ -114,12 +116,12 @@ def encode_context(x, layers, size, lengths, cells):
 def decode(x, layers, size, lengths, cells):
     prev_layer = x
     for idx in range(layers):
-        prev_layer = dynamic_rnn(
+        prev_layer,c = nn.dynamic_rnn(
             cell=cells[idx],
             inputs=prev_layer,
             sequence_length=lengths,
             initial_state=None,
-            dtype=None,
+            dtype=tf.float32,
             parallel_iterations=None,
             swap_memory=False,
             time_major=False,
@@ -131,7 +133,7 @@ class Model():
     def __init__(self, layers_enc=1, layers_ctx=1, layers_dec=1,
                  size_usr = 32, size_wd = 32,
                  size_enc=32, size_ctx=32, size_dec=32,
-                 num_wds = 8192,num_usrs = 1000)"
+                 num_wds = 8192,num_usrs = 1000):
         self.layers_enc = layers_enc
         self.layers_ctx = layers_ctx
         self.layers_dec = layers_dec
@@ -145,20 +147,36 @@ class Model():
         
         #Dimension orders: Batch, messages, words, embedding
         
+        self.learning_rate = tf.placeholder(tf.float32, shape=(None))
+        
         self.wd_ind = tf.placeholder(tf.int32, shape=(None,None, None))
         self.usr_ind = tf.placeholder(tf.int32, shape=(None,None))
         
-        self.max_wds = self.wd_ind.shape[-1]
-        
         self.conv_lengths = tf.placeholder(tf.int32, shape=(None))
         self.sentence_lengths = tf.placeholder(tf.int32, shape=(None,None))
+        
+        self.batch_size = tf.placeholder(tf.int32, shape=(None))
+        self.max_sent_len = tf.placeholder(tf.int32, shape=(None))
+        self.max_conv_len = tf.placeholder(tf.int32, shape=(None))
+        self.conv_lengths_flat = tf.reshape(self.conv_lengths, [-1])
+        self.sentence_lengths_flat = tf.reshape(self.sentence_lengths, [-1])
+        
+        self.max_sentence_length = tf.reduce_max(self.sentence_lengths)
+        
+        self.mask = tf.sequence_mask(self.sentence_lengths_flat)
+        '''
+        self.mask = tf.stack([tf.concat((tf.ones(sent_len), tf.zeros(self.max_sentence_length - sent_len))) 
+            for sent_len in self.sentence_lengths_flat], 0)
+    
+        '''
+        self.mask_flat = tf.reshape(self.mask, [-1])
         
         self.wd_mat = tf.Variable(1e-3*tf.random_normal([num_wds, size_wd]))
         self.usr_mat = tf.Variable(1e-3*tf.random_normal([num_usrs, size_usr]))
         
         self.wd_emb = tf.nn.embedding_lookup(self.wd_mat, self.wd_ind)
         self.usr_emb = tf.nn.embedding_lookup(self.usr_mat, self.usr_ind)
-        self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_wds,1] 
+        self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
         
@@ -166,39 +184,49 @@ class Model():
         self.ctx_rnns = [GRUCell(size_ctx) for _ in range(layers_ctx)]
         self.dec_rnns = [GRUCell(size_dec) for _ in range(layers_dec)]
         
+        self.sent_input = tf.reshape(self.wds_usrs,[-1, self.max_sent_len, self.size_wd + self.size_usr])
+        #        self.batch_size, self.max_conv_len, self.max_sent_len, self.size_wd + self.size_usr])
         
         self.sentence_encs = encode_sentence(
-                x=self.wds_usrs, layers=layers_enc, size = size_enc, 
-                lengths=self.sentence_lengths, cells = self.sent_rnns)
+                x=self.sent_input, layers=layers_enc, size = size_enc, 
+                lengths=self.sentence_lengths_flat, cells = self.sent_rnns)
+        
+        sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
         
         self.context_encs = encode_context(
-                x = self.sentence_encs, layers = layers_ctx, size = size_ctx,
-                lengths = self.conv_lengths, cells = self.ctx_rnns)
+                x = sentence_encs, layers = layers_ctx, size = size_ctx,
+                lengths = self.conv_lengths_flat, cells = self.ctx_rnns)
+        
         #batch, messages, (expansion needed), emb_dim
         
-        self.dec_inputs = tf.concat((tf.expand_dims(self.context_encs, 2), self.wds_usrs), 3)
+        self.dec_inputs = tf.concat(
+                (tf.tile(tf.expand_dims(self.context_encs, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
         
         self.decoder_out = decode(
                 x = self.dec_inputs, layers=layers_dec, size=size_dec,
-                lengths = sentence_lengths, cells = self.dec_rnns)
+                lengths = self.sentence_lengths_flat, cells = self.dec_rnns)
         #decoder out is message0: message-1
         self.decoder_out_for_ppl = tf.reshape(self.decoder_out[:,:-1,:,:],(-1, size_dec))
         self.target = self.wd_ind[:,1:, :]
         
-        self.ppl_loss = self.softmax(self.decoder_out_for_ppl, self.target)
+        self.ppl_loss_raw = self.softmax(self.decoder_out_for_ppl, self.target)
         
-        T.cat((wd_target[:, :, 1:], tovar(T.zeros(batch_size, maxlenbatch, 1)).long()), 2)
-            decoder_out = embed
-            out = self.softmax(decoder_out, target.view(-1))
-            out = out.view(batch_size, maxlenbatch, maxwordsmessage)
-            mask = (target != 0).float()
-            out = out * mask 
-            out_loss = -T.pow(T.abs(out)/3,1.1)
-            log_prob = out_loss.sum() / mask.sum()
+        self.ppl_loss =  self.ppl_loss_raw * self.mask
+        
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        
+        gvs = optimizer.compute_gradients(self.ppl_loss)
+        self.grad_norm = tf.reduce_mean([tf.reduce_mean(grad) for grad, var in gvs if grad is not None])
+        clip_norm = 100
+        clip_single = 1
+        capped_gvs = [(tf.clip_by_value(grad, -1*clip_single,clip_single), var)
+                      for grad, var in gvs if grad is not None]
+        capped_gvs = [(tf.clip_by_norm(grad, clip_norm), var) for grad, var in capped_gvs if grad is not None]
+        self.optimizer = optimizer.apply_gradients(capped_gvs)
         
         
-        #self._enc_rnns = [tf.nn.rnn_cell.BasicLSTMCell(size_enc) for _ in range(layers_enc)]
-
+        
+        
 class Encoder(NN.Module):
     '''
     Inputs:
@@ -248,7 +276,7 @@ class Encoder(NN.Module):
                 )
         #embed_seq: 93,160,26 length: 160,output_size: 18, init[0]: 2,160,9
         embed_seq = embed_seq.permute(1,0,2)
-        embed, (h, c) = dynamic_rnn(self.rnn, embed_seq, turns, initial_state)
+        embed, (h, c) = nn.dynamic_rnn(self.rnn, embed_seq, turns, initial_state)
         h = h.permute(1, 0, 2)
 
         return h[:, -2:].contiguous().view(batch_size, output_size), embed
@@ -295,7 +323,7 @@ class Context(NN.Module):
         if initial_state is None:
             initial_state = self.zero_state(batch_size)
         sent_encs = sent_encs.permute(1,0,2)
-        embed, (h, c) = dynamic_rnn(self.rnn, sent_encs, turns, initial_state)
+        embed, (h, c) = nn.dynamic_rnn(self.rnn, sent_encs, turns, initial_state)
         embed = cuda(embed.permute(1,0,2).contiguous())
 
         # embed is now: batch_size, max_turns, context_size
@@ -844,7 +872,7 @@ class Decoder(NN.Module):
         '''
         embed_seq = embed_seq.view(batch_size * maxlenbatch, maxwordsmessage,-1)
         embed_seq = embed_seq.permute(1,0,2).contiguous()
-        embed, (h, c) = dynamic_rnn(
+        embed, (h, c) = nn.dynamic_rnn(
                 self.rnn, embed_seq, sentence_lengths_padded.contiguous().view(-1),
                 initial_state)
         self.rnn_output = embed
@@ -1082,7 +1110,7 @@ parser.add_argument('--lambda_reconstruct', type=float, default=.1)
 parser.add_argument('--non_linearities', type=int, default=1)
 parser.add_argument('--hidden_width', type=int, default=1)
 parser.add_argument('--server', type=int, default=0)
-parser.add_argument('--plot-attention', action='store_true', help='Plot attention')
+parser.add_argument('--plot_attention', action='store_true', help='Plot attention')
 
 args = parser.parse_args()
 if args.server == 1:
@@ -1189,6 +1217,9 @@ decoder_size_sentence = args.decoder_size_sentence
 decoder_beam_size = args.decoder_beam_size
 decoder_max_generated = args.decoder_max_generated
 
+
+
+'''
 user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0, scale_grad_by_freq=True))
 word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0, scale_grad_by_freq=True))
 # If you want to preprocess other glove embeddings.
@@ -1202,6 +1233,13 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
                decoder_max_generated, decoder_beam_size, 
                state_size=decoder_size_sentence, 
                num_layers = args.decoder_layers, non_linearities = args.non_linearities))
+'''
+model = Model(layers_enc=1, layers_ctx=1, layers_dec=1,
+                 size_usr = 32, size_wd = 32,
+                 size_enc=32, size_ctx=32, size_dec=32,
+                 num_wds = num_words,num_usrs = num_usrs)
+
+
 
 eos = dataset.index_word(EOS)
 unk = dataset.index_word(UNKNOWN)
@@ -1220,12 +1258,13 @@ adv_ctx_scales = []
 baseline = None
 if modelnameload:
     if len(modelnameload) > 0:
+        pass
         user_emb = T.load('%s-user_emb-%08d' % (modelnameload, args.loaditerations))
         word_emb = T.load('%s-word_emb-%08d' % (modelnameload, args.loaditerations))
         enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations))
         context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations))
         decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
-
+'''
 params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
 named_params = sum([list(m.named_parameters())
     for m in [user_emb, word_emb, enc, context, decoder]], [])
@@ -1237,6 +1276,7 @@ def enable_eval(sub_modules):
     for m in sub_modules:
         m.eval()
 opt = T.optim.Adam(params, lr=args.lr,weight_decay=1e-8)
+'''
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 
 adv_style = 0
@@ -1269,16 +1309,7 @@ while True:
             continue
         if wds > max_wds * .6 or wds < max_wds * .05:
             continue
-        words_padded = tovar(words_padded)
-        words_reverse_padded = tovar(words_reverse_padded)
-        speaker_padded = tovar(speaker_padded)
         
-        #enable_train([user_emb, word_emb, enc, context, decoder])
-        #SO far not used
-        #addressee_padded = tovar(addressee_padded)
-        #addres_b = user_emb(addressee_padded)
-        sentence_lengths_padded = cuda(sentence_lengths_padded)
-        turns = cuda(turns)
         
         batch_size = turns.size()[0]
         max_turns = words_padded.size()[1]
@@ -1286,162 +1317,7 @@ while True:
         #batch, turns in a sample, words in a message, embedding_dim
 
         wds = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
-        #SO FAR NOT USED:
-        #wds_rev_b = word_emb(words_reverse_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
-        #batch, turns in a sample, embedding_dim
-        usrs = user_emb(speaker_padded)
-
-        # The idea is to fix the word embedding and user embedding once for a while,
-        # and train the rest of the network using adversarial sampling.
-        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > adv_min_itr:
-            scale = float(np.exp(-np.random.uniform(6,7)))
-            wds_adv, usrs_adv, loss_adv = adversarial_word_users(wds, usrs, turns,
-               size_wd,batch_size,size_usr,
-               sentence_lengths_padded, enc,
-               context,words_padded, decoder, usr_std, wd_std, scale=scale, style=adv_style)
-            # to fix the pre-adversarial-sampling components, we detach the inputs
-            wds = tovar((wds + tovar(wds_adv)).data)
-            usrs = tovar((usrs + tovar(usrs_adv)).data)
-
-        # Not sure why these two statements are here...
-        max_turns = turns.max()
-        max_words = wds.size()[2]
-
-        # Get the encoding vector for each sentence (@encodings), as well as
-        # annotation vectors for each word in each sentence (@wds_h) so that we
-        # can attend later.
-        # The encoder (@enc) takes in a batch of word embedding seqences, a batch of
-        # users, and a batch of sentence lengths.
-        encodings, wds_h = enc(wds.view(batch_size * max_turns, max_words, size_wd),usrs.view(
-                batch_size * max_turns, size_usr), sentence_lengths_padded.view(-1))
-        if not np.all(~np.isnan(tonumpy(encodings))):
-            print('crash 1')
-            continue
-        if not np.all(~np.isnan(tonumpy(wds_h))):
-            print('crash 2')
-            continue
-        #assert np.all(~np.isnan(tonumpy(encodings)))
-        #assert np.all(~np.isnan(tonumpy(wds_h)))
-        # Do the same for word-embedding, user-embedding, and encoder network
-        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
-            scale = float(np.exp(-np.random.uniform(6,7)))
-            wds_adv, usrs_adv, enc_adv, wds_h_adv, loss_adv = adversarial_encodings_wds_usrs(encodings, batch_size, 
-                    wds,usrs,max_turns, context, turns, 
-                    sentence_lengths_padded, words_padded, decoder,
-                    usr_std, wd_std, sent_std, wds_h, wds_h_std, scale=scale, style=adv_style)
-            wds = tovar((wds + tovar(wds_adv)).data)
-            usrs = tovar((usrs + tovar(usrs_adv)).data)
-            encodings = tovar((encodings + tovar(enc_adv).view_as(encodings)).data)
-            wds_h = tovar((wds_h + tovar(wds_h_adv).view_as(wds_h)).data)
-            
-        encodings = encodings.view(batch_size, max_turns, -1)
-
-        ctx, _ = context(encodings, turns, sentence_lengths_padded, wds_h.contiguous(), usrs, str_sentences=list_stringify_sentence)
-
-        # Do the same for everything except the decoder
-        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
-            scale = float(np.exp(-np.random.uniform(6,7)))
-            wds_adv, usrs_adv, ctx_adv, loss_adv = adversarial_context_wds_usrs(ctx, sentence_lengths_padded,
-                      wds,usrs,words_padded, decoder,
-                      usr_std, wd_std, ctx_std, wds_h, scale=scale, style=adv_style)
-            wds = tovar((wds + tovar(wds_adv)).data)
-            usrs = tovar((usrs + tovar(usrs_adv)).data)
-            ctx = tovar((ctx + tovar(ctx_adv)).data)
-        max_output_words = sentence_lengths_padded[:, 1:].max()
-        wds_first_sentence_removed = wds[:,1:,:max_output_words]
-        wds_reconstruct = T.cat((
-                wds_first_sentence_removed[:,:,1:,:], 
-                cuda(T.zeros(wds_first_sentence_removed.size()[0],
-                             wds_first_sentence_removed.size()[1], 1, 
-                             wds_first_sentence_removed.size()[3]))
-            ),2).contiguous()
-        usrs_decode = usrs[:,1:]
-        words_flat = words_padded[:,1:,:max_output_words].contiguous()
-        prob, log_prob, _, reconstruct_loss_mean = decoder(ctx[:,:-1:], wds_first_sentence_removed,
-                                 usrs_decode, sentence_lengths_padded[:,1:], 
-                                 words_flat, wds_reconstruct = wds_reconstruct, str_sentences=list_stringify_sentence)
-
-        # Training with PPL
-        loss = -log_prob
-        reg = reconstruct_loss_mean*1e-2 * args.lambda_reconstruct
-        opt.zero_grad()
-        loss.backward(retain_graph=True)
-        # Record gradients from PPL
-        grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
-        grad_norm = sum(T.norm(v) for v in grads.values()) ** 0.5
         
-        opt.zero_grad()
-        reg.backward(retain_graph=True)
-        # Record gradients from PPL
-        reg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
-        reg_grad_norm = sum(T.norm(v) for v in reg_grads.values()) ** 0.5
-
-        loss, grad_norm, reg, reg_grad_norm = tonumpy(loss, grad_norm, reg, reg_grad_norm)
-        loss, reg = loss[0],reg[0]
-        #print(loss, grad_norm)
-        '''
-        if itr % 100 == 0:
-            print('loss_nan', loss_nan, 'reg_nan', reg_nan, 'grad_nan', grad_nan)
-        if np.any(np.isnan(tonumpy(loss))):
-            loss_nan = 1
-            print('LOSS NAN')
-            raise ValueError
-            continue
-        if np.any(np.isnan(tonumpy(reg))):
-            reg_nan = 1
-            print('REG NAN')
-            raise ValueError
-            continue
-        if np.any(np.isnan(tonumpy(grad_norm))):
-            grad_nan = 1
-            print('grad_norm NAN')
-            raise ValueError
-            continue
-        #print('Grad norm', grad_norm)
-        '''
-        if not np.all(~np.isnan(tonumpy(loss))):
-            print('crash 3')
-            continue
-        if not np.all(~np.isnan(tonumpy(reg))):
-            print('crash 4')
-            continue
-        #assert np.all(~np.isnan(tonumpy(loss)))
-        #assert np.all(~np.isnan(tonumpy(reg)))
-
-        # Tensorboard viz start...
-        if itr % 10 == 1 and args.adversarial_sample == 1 and itr > adv_min_itr:
-            adv_emb_diffs.append(loss_adv - loss)
-            adv_emb_scales.append(scale)
-            train_writer.add_summary(
-                tf.Summary(value=[tf.Summary.Value(tag='wd_usr_adv_diff', simple_value=loss_adv - loss)]),itr)
-        if itr % 10 == 4 and args.adversarial_sample == 1 and itr > adv_min_itr:
-            adv_sent_diffs.append(loss_adv - loss)
-            adv_sent_scales.append(scale)
-            train_writer.add_summary(
-                tf.Summary(value=[tf.Summary.Value(tag='enc_adv_diff', simple_value=loss_adv - loss)]),itr)
-        if itr % 10 == 7 and args.adversarial_sample == 1 and itr > adv_min_itr:
-            adv_ctx_diffs.append(loss_adv - loss)
-            adv_ctx_scales.append(scale)
-            train_writer.add_summary(
-                tf.Summary(value=[tf.Summary.Value(tag='ctx_adv_diff', simple_value=loss_adv - loss)]),itr)
-        mask = mask_4d(wds.size(), turns , sentence_lengths_padded)
-        wds_dist = wds* mask
-        mask = mask_3d(usrs.size(), turns)
-        usrs_dist = usrs * mask
-        mask = mask_3d(encodings.size(), turns)
-        sent_dist = encodings * mask
-        wds_h_mask = wds_h.view(wds_h.size(0), args.batchsize, -1, wds_h.size(2)).permute(1,2,0,3)
-        mask = mask_4d(wds_h_mask.size(), turns , sentence_lengths_padded)
-        wds_h_dist = wds_h_mask * mask
-        mask = mask_3d(ctx.size(), turns)
-        ctx_dist = ctx * mask
-        wds_dist, usrs_dist, sent_dist, ctx_dist, wds_h_dist = tonumpy(wds_dist, usrs_dist, sent_dist, ctx_dist, wds_h_dist)
-
-        wd_std = float(np.nanstd(wds_dist))
-        usr_std = float(np.nanstd(usrs_dist))
-        sent_std = float(np.nanstd(sent_dist))
-        ctx_std = float(np.nanstd(ctx_dist))
-        wds_h_std = float(np.nanstd(wds_h_dist))
         if itr % 10 == 0:
             train_writer.add_summary(
                     tf.Summary(
