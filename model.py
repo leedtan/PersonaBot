@@ -14,6 +14,7 @@ from tensorflow import nn
 import numpy.random as RNG
 from numpy import rate
 from tensorflow.contrib.rnn import GRUCell
+from tensorflow import layers
 import argparse, sys, datetime, pickle, os
 
 import matplotlib
@@ -53,6 +54,8 @@ class Residual(NN.Module):
         else:
             return self.linear(x) + x
 '''
+def lrelu(x):
+    return tf.maximum(x, .3*x)
 class Residual(NN.Module):
     def __init__(self,size, hidden):
         NN.Module.__init__(self)
@@ -91,7 +94,7 @@ def encode_sentence(x, layers, size, lengths, cells):
             parallel_iterations=None,
             swap_memory=False,
             time_major=False,
-            scope=None
+            scope='enc' + str(idx)
             )
         prev_layer = tf.concat(h, -1)
     output_layer = prev_layer[:,-1,:]
@@ -109,7 +112,7 @@ def encode_context(x, layers, size, lengths, cells):
             parallel_iterations=None,
             swap_memory=False,
             time_major=False,
-            scope=None
+            scope='ctx' + str(idx)
             )
     return prev_layer
 
@@ -125,7 +128,7 @@ def decode(x, layers, size, lengths, cells):
             parallel_iterations=None,
             swap_memory=False,
             time_major=False,
-            scope=None
+            scope='dec' + str(idx)
             )
     return prev_layer
 
@@ -169,7 +172,10 @@ class Model():
             for sent_len in self.sentence_lengths_flat], 0)
     
         '''
-        self.mask_flat = tf.reshape(self.mask, [-1])
+        self.mask_flat = tf.cast(tf.reshape(self.mask, [-1]), tf.float32)
+        self.mask_expanded = tf.reshape(self.mask, [self.batch_size, self.max_conv_len, self.max_sent_len])
+        self.mask_decode = self.mask_expanded[:,1:,:]
+        self.mask_flat_decode = tf.cast(tf.reshape(self.mask_decode, [-1]), tf.float32)
         
         self.wd_mat = tf.Variable(1e-3*tf.random_normal([num_wds, size_wd]))
         self.usr_mat = tf.Variable(1e-3*tf.random_normal([num_usrs, size_usr]))
@@ -180,9 +186,13 @@ class Model():
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
         
-        self.sent_rnns = [[GRUCell(size_enc//2), GRUCell(size_enc//2)] for _ in range(layers_enc)]
-        self.ctx_rnns = [GRUCell(size_ctx) for _ in range(layers_ctx)]
-        self.dec_rnns = [GRUCell(size_dec) for _ in range(layers_dec)]
+        self.sent_rnns = [[GRUCell(size_enc//2, kernel_initializer=tf.contrib.layers.xavier_initializer()),
+                           GRUCell(size_enc//2, kernel_initializer=tf.contrib.layers.xavier_initializer())]
+            for _ in range(layers_enc)]
+        self.ctx_rnns = [GRUCell(size_ctx, kernel_initializer=tf.contrib.layers.xavier_initializer())
+            for _ in range(layers_ctx)]
+        self.dec_rnns = [GRUCell(size_dec, kernel_initializer=tf.contrib.layers.xavier_initializer())
+            for _ in range(layers_dec)]
         
         self.sent_input = tf.reshape(self.wds_usrs,[-1, self.max_sent_len, self.size_wd + self.size_usr])
         #        self.batch_size, self.max_conv_len, self.max_sent_len, self.size_wd + self.size_usr])
@@ -199,24 +209,35 @@ class Model():
         
         #batch, messages, (expansion needed), emb_dim
         
-        self.dec_inputs = tf.concat(
+        dec_inputs = tf.concat(
                 (tf.tile(tf.expand_dims(self.context_encs, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
+        
+        self.dec_inputs = tf.reshape(dec_inputs, [-1, self.max_sent_len,self.size_ctx + self.size_wd + self.size_usr])
         
         self.decoder_out = decode(
                 x = self.dec_inputs, layers=layers_dec, size=size_dec,
                 lengths = self.sentence_lengths_flat, cells = self.dec_rnns)
         #decoder out is message0: message-1
-        self.decoder_out_for_ppl = tf.reshape(self.decoder_out[:,:-1,:,:],(-1, size_dec))
+        self.decoder_deep = tf.reshape(
+                self.decoder_out, (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec))
+        self.decoder_out_for_ppl = tf.reshape(self.decoder_deep[:,:-1,:,:],(-1, size_dec))
         self.target = self.wd_ind[:,1:, :]
-        
+        self.target_flat = tf.reshape(self.target, [-1])
+        self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds)
+        self.dec_relu = lrelu(self.dec_raw)
+        self.dec_softmaxed = tf.nn.softmax(self.dec_relu)
+        self.ppl_loss_raw = tf.gather_nd(tf.transpose(self.dec_softmaxed), tf.reshape(self.target_flat, [-1,1]))[:,0]
+        #self.ppl_loss_raw = tf.gather_nd(self.dec_softmaxed,self.target_flat)
+        '''
+        self.ppl_loss_raw = self.dec_softmaxed[self.target_flat]
         self.ppl_loss_raw = self.softmax(self.decoder_out_for_ppl, self.target)
-        
-        self.ppl_loss =  self.ppl_loss_raw * self.mask
-        
+        '''
+        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
+        self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         
         gvs = optimizer.compute_gradients(self.ppl_loss)
-        self.grad_norm = tf.reduce_mean([tf.reduce_mean(grad) for grad, var in gvs if grad is not None])
+        self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 100
         clip_single = 1
         capped_gvs = [(tf.clip_by_value(grad, -1*clip_single,clip_single), var)
@@ -1074,7 +1095,8 @@ class Decoder(NN.Module):
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='OpenSubtitles-dialogs-small', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='opensub', help='Root of meta data')
-parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary size')
+#39996
+parser.add_argument('--vocabsize', type=int, default=796, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -1237,7 +1259,7 @@ decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn
 model = Model(layers_enc=1, layers_ctx=1, layers_dec=1,
                  size_usr = 32, size_wd = 32,
                  size_enc=32, size_ctx=32, size_dec=32,
-                 num_wds = num_words,num_usrs = num_usrs)
+                 num_wds = num_words+1,num_usrs = num_usrs+1)
 
 
 
@@ -1256,6 +1278,8 @@ adv_emb_scales = []
 adv_sent_scales = []
 adv_ctx_scales = []
 baseline = None
+sess = tf.Session()
+sess.run(tf.global_variables_initializer())
 if modelnameload:
     if len(modelnameload) > 0:
         pass
@@ -1278,7 +1302,6 @@ def enable_eval(sub_modules):
 opt = T.optim.Adam(params, lr=args.lr,weight_decay=1e-8)
 '''
 #opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
-
 adv_style = 0
 scatter_entropy_freq = 200
 time_train = 0
@@ -1289,7 +1312,7 @@ while True:
         start_train = time.time()
         if itr % scatter_entropy_freq == 0:
             adv_style = 1 - adv_style
-            adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
+            #adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
         itr += 1
         '''
         if itr % 100 == 0:
@@ -1305,18 +1328,55 @@ while True:
 
         wds = sentence_lengths_padded.sum()
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
-        if sentence_lengths_padded.size(1) < 2:
+        if sentence_lengths_padded.shape[1] < 2:
             continue
         if wds > max_wds * .6 or wds < max_wds * .05:
             continue
         
         
-        batch_size = turns.size()[0]
-        max_turns = words_padded.size()[1]
-        max_words = words_padded.size()[2]
-        #batch, turns in a sample, words in a message, embedding_dim
-
-        wds = word_emb(words_padded.view(-1, max_words)).view(batch_size, max_turns, max_words, size_wd)
+        batch_size = turns.shape[0]
+        max_turns = words_padded.shape[1]
+        max_words = words_padded.shape[2]
+        #batch, turns in a sample, words in a message
+        feed_dict = {
+                model.learning_rate: 1e-3,
+                model.wd_ind: words_padded,
+                model.usr_ind: speaker_padded,
+                model.conv_lengths: turns,
+                model.sentence_lengths: sentence_lengths_padded,
+                model.batch_size: batch_size,
+                model.max_sent_len: max_words,
+                model.max_conv_len: max_turns
+                }
+        '''
+         self.dec_softmaxed = tf.nn.softmax(self.dec_relu)
+        self.ppl_loss_raw = tf.gather_nd(self.dec_softmaxed, tf.reshape(self.target_flat, [-1,1]))[:,0]
+        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat
+        self.ppl_loss = tf.reduce_mean(self.ppl_loss_masked)
+        '''
+        #print(words_padded.shape)
+        #_, loss, grad_norm =  sess.run(model.dec_softmaxed,feed_dict=feed_dict)
+        dbg = 0
+        if dbg:
+            self=model
+            sess.run(tf.gather_nd(tf.transpose(self.dec_softmaxed), tf.reshape(self.target_flat, [-1,1]))[:,0], feed_dict)
+            dec_raw, ppl_raw, dec_relu, dec, target, target_flat =  sess.run(
+                [model.dec_raw, model.ppl_loss_raw,  model.target, model.target_flat],
+                feed_dict=feed_dict)
+            dec_raw, dec_relu, dec, target, target_flat =  sess.run(
+                [model.dec_raw, model.dec_relu, model.dec_softmaxed,
+                model.ppl_loss_masked, model.target, model.target_flat],
+                feed_dict=feed_dict)
+            _, loss, grad_norm, dec_raw, dec_relu, dec, loss_raw, masked, target, target_flat =  sess.run(
+                [model.optimizer,model.ppl_loss, model.grad_norm,
+                model.dec_raw, model.dec_relu, model.dec_softmaxed, model.ppl_loss_raw,
+                model.ppl_loss_masked, model.target, model.target_flat],
+                feed_dict=feed_dict)
+        else:
+            _, loss, grad_norm =  sess.run([model.optimizer,model.ppl_loss, model.grad_norm],
+                    feed_dict=feed_dict)
+        
+        
         
         if itr % 10 == 0:
             train_writer.add_summary(
@@ -1324,16 +1384,7 @@ while True:
                         value=[
                             tf.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((8, tonumpy(loss))))),
                             tf.Summary.Value(tag='loss', simple_value=loss),
-                            tf.Summary.Value(tag='reg', simple_value=reg),
-                            tf.Summary.Value(tag='time_train', simple_value=time_train),
-                            tf.Summary.Value(tag='time_decode', simple_value=time_decode),
                             tf.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                            tf.Summary.Value(tag='reg_grad_norm', simple_value=reg_grad_norm),
-                            tf.Summary.Value(tag='wd_std', simple_value=wd_std),
-                            tf.Summary.Value(tag='usr_std', simple_value=usr_std),
-                            tf.Summary.Value(tag='sent_std', simple_value=sent_std),
-                            tf.Summary.Value(tag='ctx_std', simple_value=ctx_std),
-                            tf.Summary.Value(tag='wds_h_std', simple_value=wds_h_std),
                             
                             ]
                         ),
@@ -1341,10 +1392,15 @@ while True:
                     )
         time_train += time.time() - start_train
         if itr % scatter_entropy_freq == 0:
-            prob, _ = decoder(ctx[:1,:-1], wds_first_sentence_removed[:1,:,:].contiguous(),
-                                 usrs_decode[:1:], sentence_lengths_padded[:1,1:])
+            prob =  sess.run(model.dec_softmaxed,
+                    feed_dict=feed_dict)
+            #prob, _ = decoder(ctx[:1,:-1], wds_first_sentence_removed[:1,:,:].contiguous(),
+            #                     usrs_decode[:1:], sentence_lengths_padded[:1,1:])
             #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-            mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
+            
+            #mask = 
+            #mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
+            prob = prob.reshape(batch_size, max_turns-1, max_words,-1)
             Entropy = (prob.exp() * prob * -1) * mask
             Entropy_per_word = Entropy.sum(-1)
             Entropy_per_word = tonumpy(Entropy_per_word)[0]
@@ -1394,7 +1450,7 @@ while True:
         # ...Tensorboard viz end
 
         # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0 and itr > 100:
+        if itr % 10 == 0 and itr > 100 and 0:
             start_decode = time.time()
             #enable_eval([user_emb, word_emb, enc, context, decoder])
             greedy_responses, logprobs = decoder.greedyGenerateBleu(
@@ -1518,7 +1574,7 @@ while True:
 
             # Dump...
             #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
-            if itr % 100 == 0:
+            if itr % 100 == -1:
                 greedy_responses = tonumpy(greedy_responses)
                 
                 words_padded_decode = tonumpy(words_padded[0,:,:])
@@ -1563,18 +1619,7 @@ while True:
             time_decode += time.time() - start_decode
         
         # After all these gibberish, add back the recorded grads from PPL and take a step
-        for p in params:
-            if p.grad is not None and p in grads:
-                p.grad.data += grads[p]
-            if p.grad is not None and p in reg_grads:
-                p.grad.data += reg_grads[p]
-        if not check_grad(params):
-            print('crash 6')
-            continue
-        #assert check_grad(params)
-        clip_grad(params, args.gradclip)
-        opt.step()
-        
+       
         if itr % 10000 == 0:
             T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
             T.save(word_emb, '%s-word_emb-%08d' % (modelnamesave, itr))

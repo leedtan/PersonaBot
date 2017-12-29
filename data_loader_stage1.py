@@ -280,12 +280,13 @@ def collate_as_tensor(samples):
             words_padded[i, j, :sentence_lengths[i][j]] = sentences[i][j]
             words_reverse_padded[i, j, :sentence_lengths[i][j]] = sentences[i][j][::-1]
 
-    turns = T.from_numpy(turns)
-    sentence_lengths_padded = T.from_numpy(sentence_lengths_padded)
-    speaker_padded = T.from_numpy(speaker_padded)
-    addressee_padded = T.from_numpy(addressee_padded)
-    words_padded = T.from_numpy(words_padded)
-    words_reverse_padded = T.from_numpy(words_reverse_padded)
+    if 0: #only for pytorch version
+        turns = T.from_numpy(turns)
+        sentence_lengths_padded = T.from_numpy(sentence_lengths_padded)
+        speaker_padded = T.from_numpy(speaker_padded)
+        addressee_padded = T.from_numpy(addressee_padded)
+        words_padded = T.from_numpy(words_padded)
+        words_reverse_padded = T.from_numpy(words_reverse_padded)
 
     return turns, sentence_lengths_padded, speaker_padded, addressee_padded, words_padded, words_reverse_padded
 
