@@ -236,7 +236,7 @@ class Model():
         self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         
-        gvs = optimizer.compute_gradients(self.ppl_loss)
+        gvs = optimizer.compute_gradients(self.ppl_loss * 1000)
         self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 100
         clip_single = 1
@@ -1095,8 +1095,8 @@ class Decoder(NN.Module):
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='OpenSubtitles-dialogs-small', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='opensub', help='Root of meta data')
-#39996
-parser.add_argument('--vocabsize', type=int, default=796, help='Vocabulary size')
+#796
+parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -1391,7 +1391,8 @@ while True:
                     itr
                     )
         time_train += time.time() - start_train
-        if itr % scatter_entropy_freq == 0:
+        #TODO 
+        if itr % scatter_entropy_freq == 0 and 0:
             prob =  sess.run(model.dec_softmaxed,
                     feed_dict=feed_dict)
             #prob, _ = decoder(ctx[:1,:-1], wds_first_sentence_removed[:1,:,:].contiguous(),
@@ -1401,7 +1402,8 @@ while True:
             #mask = 
             #mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
             prob = prob.reshape(batch_size, max_turns-1, max_words,-1)
-            Entropy = (prob.exp() * prob * -1) * mask
+            prob[:,turns[:1]:,:,:] = 0
+            Entropy = (np.exp(prob) * prob * -1) * mask
             Entropy_per_word = Entropy.sum(-1)
             Entropy_per_word = tonumpy(Entropy_per_word)[0]
             #E_mean = tonumpy(Entropy_per_word.sum() / mask.sum())[0]
