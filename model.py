@@ -320,7 +320,7 @@ class Model():
         prev_layer = tf.concat((self.context_encs, start_usrs), -1)
         prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
         prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
-        prev_layer = tf.reshape(prev_layer, [-1, self.size_dec + self.size_wd + self.size_usr])
+        prev_layer = tf.reshape(prev_layer, [-1, self.size_ctx + self.size_wd + self.size_usr])
         for _ in range(max_length):
             for idx in range(num_layers):
                 prev_layer,prev_state[idx] =self.dec_rnns[idx](inputs = prev_layer, state = prev_state[idx])
@@ -343,13 +343,13 @@ parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary siz
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
-parser.add_argument('--encoder_layers', type=int, default=3)
-parser.add_argument('--decoder_layers', type=int, default=1)
-parser.add_argument('--context_layers', type=int, default=1)
-parser.add_argument('--size_context', type=int, default=256)
-parser.add_argument('--size_sentence', type=int, default=128)
-parser.add_argument('--size_attn', type=int, default=64)
-parser.add_argument('--decoder_size_sentence', type=int, default=512)
+parser.add_argument('--layers_enc', type=int, default=3)
+parser.add_argument('--layers_ctx', type=int, default=2)
+parser.add_argument('--layers_dec', type=int, default=2)
+parser.add_argument('--size_ctx', type=int, default=128)
+parser.add_argument('--size_enc', type=int, default=64)
+parser.add_argument('--size_attn', type=int, default=512)
+parser.add_argument('--size_dec', type=int, default=256)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=50)
 parser.add_argument('--batchsize', type=int, default=1)
@@ -471,14 +471,17 @@ vcb_len = len(vcb)
 num_words = vcb_len
 size_usr = args.size_usr
 size_wd = args.size_wd
-size_sentence = args.size_sentence
-size_context = args.size_context
+size_enc = args.size_enc
+size_ctx = args.size_ctx
 size_attn = args.size_attn = 10 #For now hard coding to 10.
-decoder_size_sentence = args.decoder_size_sentence
+size_dec = args.size_dec
+layers_enc = args.layers_enc
+layers_ctx = args.layers_ctx
+layers_dec = args.layers_dec
 
-model = Model(layers_enc=1, layers_ctx=1, layers_dec=1,
-                 size_usr = 32, size_wd = 32,
-                 size_enc=32, size_ctx=32, size_dec=32,
+model = Model(layers_enc=layers_enc, layers_ctx=layers_ctx, layers_dec=layers_dec,
+                 size_usr = size_usr, size_wd = size_wd,
+                 size_enc=size_enc, size_ctx=size_ctx, size_dec=size_dec,
                  num_wds = num_words+1,num_usrs = num_usrs+1)
 
 
@@ -555,7 +558,7 @@ while True:
                 model.max_conv_len: max_turns
                 }
         dbg = 0
-        repeat = 1
+        repeat = 0
         if repeat:
             for itr in range(1000000):
                 _, loss, grad_norm =  sess.run([model.optimizer,model.ppl_loss, model.grad_norm],
