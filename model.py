@@ -218,10 +218,13 @@ class Model():
         self.mask = tf.stack([tf.concat((tf.ones(sent_len), tf.zeros(self.max_sentence_length - sent_len))) 
             for sent_len in self.sentence_lengths_flat], 0)
         '''
-        self.mask_flat = tf.cast(tf.reshape(self.mask, [-1]), tf.float32)
+        #self.mask_flat = tf.cast(tf.reshape(self.mask, [-1]), tf.float32)
         self.mask_expanded = tf.reshape(self.mask, [self.batch_size, self.max_conv_len, self.max_sent_len])
         self.mask_decode = self.mask_expanded[:,1:,:]
-        self.mask_flat_decode = tf.cast(tf.reshape(self.mask_decode, [-1]), tf.float32)
+        self.mask_flat_decode = tf.cast(
+                tf.reshape(self.mask_decode, [self.batch_size * (self.max_conv_len-1), self.max_sent_len]),
+                tf.float32)
+        #self.mask_flat_decode = tf.cast(tf.reshape(self.mask_decode, [-1]), tf.float32)
         
         self.wd_mat = tf.Variable(1e-3*tf.random_normal([num_wds, size_wd]))
         self.usr_mat = tf.Variable(1e-3*tf.random_normal([num_usrs, size_usr]))
@@ -279,9 +282,6 @@ class Model():
         self.dec_relu = lrelu(self.dec_raw)
         self.dec_relu_shaped = tf.reshape(
                 self.dec_relu, [self.batch_size *  (self.max_conv_len-1), self.max_sent_len, self.num_wds])
-        self.mask_flat_decode = tf.cast(
-                tf.reshape(self.mask_decode, [self.batch_size * (self.max_conv_len-1), self.max_sent_len]),
-                tf.float32)
         
         self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
         self.ppl_loss_masked = self.ppl_loss_raw = tf.contrib.seq2seq.sequence_loss(
@@ -293,7 +293,7 @@ class Model():
             softmax_loss_function=None,
             name=None
         )
-        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(tf.pow(self.ppl_loss_masked, 1.5), 1), 0)/tf.reduce_sum(self.mask_flat_decode)
+        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(tf.pow(self.ppl_loss_masked, 1.3), 1), 0)/tf.reduce_sum(self.mask_flat_decode)
         self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
                 max_length = 30, start_token = dataset.index_word(START))
         
@@ -560,7 +560,18 @@ while True:
             for itr in range(1000000):
                 _, loss, grad_norm =  sess.run([model.optimizer,model.ppl_loss, model.grad_norm],
                         feed_dict=feed_dict)
-                if itr % 50 == 0:
+                if itr % 100 == 0:
+                    train_writer.add_summary(
+                            tf.Summary(
+                                value=[
+                                    tf.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((8, tonumpy(loss))))),
+                                    tf.Summary.Value(tag='loss', simple_value=loss),
+                                    tf.Summary.Value(tag='grad_norm', simple_value=grad_norm),
+                                    
+                                    ]
+                                ),
+                            itr
+                            )
                     greedy_responses, greedy_values = sess.run(
                             [model.greedy_words, model.greedy_pre_argmax],
                             feed_dict = feed_dict)
@@ -594,7 +605,7 @@ while True:
         
         
         
-        if itr % 10 == 0:
+        if itr % 100 == 0:
             train_writer.add_summary(
                     tf.Summary(
                         value=[
@@ -606,7 +617,7 @@ while True:
                         ),
                     itr
                     )
-        if itr % 20 == 0:
+        if itr % 100 == 0:
             greedy_responses, greedy_values = sess.run(
                     [model.greedy_words, model.greedy_pre_argmax],
                     feed_dict = feed_dict)
