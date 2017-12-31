@@ -54,6 +54,53 @@ class Residual(NN.Module):
         else:
             return self.linear(x) + x
 '''
+
+def print_greedy_decode(words_padded, greedy_responses, greedy_values):
+    words_padded_decode = words_padded[0,:,:]
+    greedy_responses = np.stack(greedy_responses,1)
+    greedy_values = np.stack(greedy_values,1)
+    for i in range(greedy_responses.shape[0]-1):
+        end_idx = np.where(greedy_responses[i,:] == eos)
+        printed = 0
+        if len(end_idx) > 0:
+            end_idx = end_idx[0]
+            if len(end_idx) > 0:
+                end_idx = end_idx[0]
+                if end_idx > 0:
+                    speaker, _, words = dataset.translate_item(
+                            speaker_padded[0:1, i], None, words_padded_decode[i:i+1,:end_idx+1])
+                    print('Real:', speaker[0], ' '.join(words[0]))
+                    printed = 1
+            if printed == 0 and words_padded_decode[i, 1].sum() > 0:
+                try:
+                    speaker, _, words = dataset.translate_item(
+                            speaker_padded[0:1, i], None, words_padded_decode[i:i+1,:])
+                    print('Real:', speaker[0], ' '.join(words[0]))
+                    printed = 1
+                except:
+                    print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
+                    break
+            if printed == 0:
+                break
+
+            end_idx = np.where(greedy_responses[i,:]==eos)
+            printed = 0
+            if len(end_idx) > 0:
+                end_idx = end_idx[0]
+                if len(end_idx) > 0:
+                    end_idx = end_idx[0]
+                    if end_idx > 0:
+                        speaker, _, words = dataset.translate_item(
+                                speaker_padded[0:1, i+1], None, greedy_responses[i:i+1,:end_idx+1])
+                        print('Fake:', speaker[0], ' '.join(words[0]))
+                        printed = 1
+            if printed == 0:
+                speaker, _, words = dataset.translate_item(
+                        speaker_padded[0:1, i+1], None, greedy_responses[i:i+1,:])
+                print('Fake:', speaker[0], ' '.join(words[0]))
+            if words_padded_decode[i, 1].sum() == 0:
+                break
+    
 def lrelu(x):
     return tf.maximum(x, .1*x)
 class Residual(NN.Module):
@@ -182,6 +229,8 @@ class Model():
         self.wd_emb = tf.nn.embedding_lookup(self.wd_mat, self.wd_ind)
         self.usr_emb = tf.nn.embedding_lookup(self.usr_mat, self.usr_ind)
         self.usr_emb_flat = tf.reshape(self.usr_emb, [-1, size_usr])
+        self.usr_emb_decode = tf.concat((self.usr_emb[:,1:,:], self.usr_emb[:,-2:-1,:]), 1)
+        self.usr_emb_decode_flat = tf.reshape(self.usr_emb_decode, [-1, size_usr])
         self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
@@ -212,7 +261,8 @@ class Model():
         dec_inputs = tf.concat(
                 (tf.tile(tf.expand_dims(self.context_encs, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
         
-        self.dec_inputs = tf.reshape(dec_inputs, [-1, self.max_sent_len,self.size_ctx + self.size_wd + self.size_usr])
+        self.dec_inputs = tf.reshape(dec_inputs, 
+                                     [-1, self.max_sent_len,self.size_ctx + self.size_wd + self.size_usr])
         
         self.target = self.wd_ind[:,1:, :]
         self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len])
@@ -243,97 +293,10 @@ class Model():
             softmax_loss_function=None,
             name=None
         )
-        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(self.ppl_loss_masked, 1), 0)/tf.reduce_sum(self.mask_flat_decode)
+        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(tf.pow(self.ppl_loss_masked, 1.5), 1), 0)/tf.reduce_sum(self.mask_flat_decode)
         self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
                 max_length = 30, start_token = dataset.index_word(START))
-        '''
-        start = dataset.index_word(START)
-        eos = dataset.index_word(EOS)
-        unk = dataset.index_word(UNKNOWN)
-        self.ppl_loss_raw = tf.nn.softmax_cross_entropy_with_logits(
-                labels = self.labels, logits = self.dec_relu)
-        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
-        self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
-        '''
-        '''
-        tf.nn.sampled_softmax_loss(
-            weights,
-            biases,
-            labels,
-            inputs,
-            num_sampled,
-            num_classes,
-            num_true=1,
-            sampled_values=None,
-            remove_accidental_hits=True,
-            partition_strategy='mod',
-            name='sampled_softmax_loss'
-        )
-        if mode == "train":
-          loss = tf.nn.sampled_softmax_loss(
-          weights=weights,
-          biases=biases,
-          labels=labels,
-          inputs=inputs,
-          ...,
-          partition_strategy="div")
-        elif mode == "eval":
-          logits = tf.matmul(inputs, tf.transpose(weights))
-          logits = tf.nn.bias_add(logits, biases)
-          labels_one_hot = tf.one_hot(labels, n_classes)
-          loss = tf.nn.softmax_cross_entropy_with_logits(
-          labels=labels_one_hot,
-          logits=logits)
-        self.softmax_weights = tf.get_variable("softmax_weights", [self.dec_relu.get_shape(1), num_wds], tf.float32,
-                                 tf.contrib.layers.xavier_initializer())
-        self.softmax_bias = tf.get_variable("softmax_bias", [num_wds],
-            initializer=tf.constant_initializer(0))
-        self.ppl_loss_raw = tf.nn.sampled_softmax_loss(
-            weights=self.softmax_weights,
-            biases = self.softmax_bias,
-            labels = self.labels,
-            inputs = self.dec_relu,
-            num_sampled,
-            num_classes,
-            num_true=1,
-            sampled_values=None,
-            remove_accidental_hits=True,
-            partition_strategy='mod',
-            name='sampled_softmax_loss'
-        )
-        #self.ppl_loss_raw = tf.gather_nd(tf.transpose(self.dec_softmaxed), labels)[:,0]
-        #self.ppl_loss_raw = tf.gather_nd(self.dec_softmaxed,self.target_flat)
-        self.ppl_loss_raw = self.dec_softmaxed[self.target_flat]
-        self.ppl_loss_raw = self.softmax(self.decoder_out_for_ppl, self.target)
-        self.dec_softmaxed = tf.nn.softmax(self.dec_relu)
-        '''
-        '''
-        OTHER VERSION:
-        self.softmax_weights = tf.get_variable("softmax_weights2", [self.dec_relu.get_shape()[1], num_wds], tf.float32,
-                                 tf.contrib.layers.xavier_initializer())
-        self.softmax_bias = tf.get_variable("softmax_bias2", [num_wds],
-            initializer=tf.constant_initializer(0))
-        self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
-        self.ppl_loss_raw = tf.nn.sampled_softmax_loss(
-            weights=self.softmax_weights,
-            biases = self.softmax_bias,
-            labels = self.labels,
-            inputs = self.dec_relu,
-            num_sampled = num_wds,
-            num_classes = num_wds,
-            num_true=1,
-            sampled_values=None,
-            remove_accidental_hits=True,
-            partition_strategy='mod',
-            name='sampled_softmax_loss'
-        )
         
-        self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
-        self.ppl_loss_raw = tf.nn.softmax_cross_entropy_with_logits(
-                labels = self.labels, logits = self.dec_relu)
-        '''
-        #self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
-        #self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         
         gvs = optimizer.compute_gradients(self.ppl_loss * 1000)
@@ -353,7 +316,7 @@ class Model():
         pre_argmax_values = []
         start_embedding = tf.expand_dims(tf.nn.embedding_lookup(self.wd_mat, tf.expand_dims(start_token, -1)), 0)
         start_embedding = tf.tile(start_embedding, [self.batch_size, self.max_conv_len, 1])
-        start_usrs = tf.concat((start_embedding, self.usr_emb), 2)
+        start_usrs = tf.concat((start_embedding, self.usr_emb_decode), 2)
         prev_layer = tf.concat((self.context_encs, start_usrs), -1)
         prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
         prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
@@ -366,7 +329,7 @@ class Model():
             words.append(next_words)
             pre_argmax_values.append(prev_layer)
             wd_embeddings = tf.nn.embedding_lookup(self.wd_mat, next_words)
-            wds_usrs = tf.concat((wd_embeddings, self.usr_emb_flat), -1)
+            wds_usrs = tf.concat((wd_embeddings, self.usr_emb_decode_flat), -1)
             prev_layer = tf.concat((ctx_flat, wds_usrs), -1)
         return words, pre_argmax_values
 
@@ -513,23 +476,6 @@ size_context = args.size_context
 size_attn = args.size_attn = 10 #For now hard coding to 10.
 decoder_size_sentence = args.decoder_size_sentence
 
-
-
-'''
-user_emb = cuda(NN.Embedding(num_usrs+1, size_usr, padding_idx = 0, scale_grad_by_freq=True))
-word_emb = cuda(NN.Embedding(vcb_len+1, size_wd, padding_idx = 0, scale_grad_by_freq=True))
-# If you want to preprocess other glove embeddings.
-# preprocess_glove(args.gloveroot, 100)
-word_emb.weight.data.copy_(init_glove(word_emb, vcb, dataset._ivocab, args.gloveroot))
-enc = cuda(Encoder(size_usr, size_wd, size_sentence, num_layers = args.encoder_layers,
-                   non_linearities = args.non_linearities))
-context = cuda(Context(size_sentence, size_context, size_attn,
-               num_layers = args.context_layers, non_linearities = args.non_linearities))
-decoder = cuda(Decoder(size_usr, size_wd, size_context, size_sentence, size_attn, num_words+1,
-               decoder_max_generated, decoder_beam_size, 
-               state_size=decoder_size_sentence, 
-               num_layers = args.decoder_layers, non_linearities = args.non_linearities))
-'''
 model = Model(layers_enc=1, layers_ctx=1, layers_dec=1,
                  size_usr = 32, size_wd = 32,
                  size_enc=32, size_ctx=32, size_dec=32,
@@ -562,20 +508,6 @@ if modelnameload:
         enc = T.load('%s-enc-%08d' % (modelnameload, args.loaditerations))
         context = T.load('%s-context-%08d' % (modelnameload, args.loaditerations))
         decoder = T.load('%s-decoder-%08d' % (modelnameload, args.loaditerations))
-'''
-params = sum([list(m.parameters()) for m in [user_emb, word_emb, enc, context, decoder]], [])
-named_params = sum([list(m.named_parameters())
-    for m in [user_emb, word_emb, enc, context, decoder]], [])
-
-def enable_train(sub_modules):
-    for m in sub_modules:
-        m.train()
-def enable_eval(sub_modules):
-    for m in sub_modules:
-        m.eval()
-opt = T.optim.Adam(params, lr=args.lr,weight_decay=1e-8)
-'''
-#opt = T.optim.RMSprop(params, lr=args.lr,weight_decay=1e-6)
 adv_style = 0
 scatter_entropy_freq = 200
 time_train = 0
@@ -622,15 +554,20 @@ while True:
                 model.max_sent_len: max_words,
                 model.max_conv_len: max_turns
                 }
-        '''
-         self.dec_softmaxed = tf.nn.softmax(self.dec_relu)
-        self.ppl_loss_raw = tf.gather_nd(self.dec_softmaxed, tf.reshape(self.target_flat, [-1,1]))[:,0]
-        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat
-        self.ppl_loss = tf.reduce_mean(self.ppl_loss_masked)
-        '''
-        #print(words_padded.shape)
-        #_, loss, grad_norm =  sess.run(model.dec_softmaxed,feed_dict=feed_dict)
         dbg = 0
+        repeat = 1
+        if repeat:
+            for itr in range(1000000):
+                _, loss, grad_norm =  sess.run([model.optimizer,model.ppl_loss, model.grad_norm],
+                        feed_dict=feed_dict)
+                if itr % 50 == 0:
+                    greedy_responses, greedy_values = sess.run(
+                            [model.greedy_words, model.greedy_pre_argmax],
+                            feed_dict = feed_dict)
+                    print_greedy_decode(words_padded, greedy_responses, greedy_values)
+                    print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(np.min((10, tonumpy(loss)))))
+                
+            
         if dbg:
             self=model
             feed_dict_dbg = {self.dec_relu : np.stack([np.arange(40000),np.arange(40000-1,-1,-1)]),
@@ -644,25 +581,7 @@ while True:
             sess.run(tf.nn.softmax_cross_entropy_with_logits(
                 labels = self.labels, logits = self.dec_relu), feed_dict_dbg)
             sess.run([self.labels, self.dec_relu], feed_dict_dbg)
-            '''
-        self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
-        self.ppl_loss_raw = tf.nn.softmax_cross_entropy_with_logits(
-                labels = self.labels, logits = self.dec_relu)
-        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
-        self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
-        
-            tflat, soft = sess.run(tf.nn.softmax_cross_entropy_with_logits(
-                labels = tf.reshape(self.target_flat, [1,-1]), logits = tf.transpose(self.dec_softmaxed)),feed_dict)
-            tflat, soft = sess.run(tf.nn.softmax_cross_entropy_with_logits(
-                labels = self.target_flat, logits = tf.transpose(self.dec_softmaxed)),feed_dict)
-            tflat, soft = sess.run(tf.nn.softmax_cross_entropy_with_logits(
-                labels = tf.reshape(self.target_flat, [1, -1]), logits = self.dec_softmaxed),feed_dict)
-            
-            tflat, soft = sess.run([self.target_flat, self.dec_softmaxed],feed_dict)
-            sess.run(tf.gather_nd(tf.transpose(self.dec_softmaxed), tf.reshape(self.target_flat, [-1,1]))[:,0], feed_dict_dbg)
-            sess.run(tf.gather_nd(tf.transpose(self.dec_softmaxed), tf.reshape(self.target_flat, [-1,1]))[:,0], feed_dict)
-            '''
-            
+
             _, loss, grad_norm, dec_relu, loss_raw, dec_masked, labels =  sess.run(
                 [model.optimizer,model.ppl_loss, model.grad_norm,
                 model.dec_relu, model.ppl_loss_raw,
@@ -687,56 +606,11 @@ while True:
                         ),
                     itr
                     )
-        if itr % 100 == 0:
-            greedy_words, greedy_values = model.sess.run(
-                    [self.greedy_words, self.greedy_pre_argmax],
+        if itr % 20 == 0:
+            greedy_responses, greedy_values = sess.run(
+                    [model.greedy_words, model.greedy_pre_argmax],
                     feed_dict = feed_dict)
-            '''
-             if itr % 100 == -1:
-                greedy_responses = tonumpy(greedy_responses)
-                
-                words_padded_decode = tonumpy(words_padded[0,:,:])
-                for i in range(greedy_responses.shape[0]):
-                        
-                    end_idx = np.where(words_padded_decode[i,:]==eos)
-                    printed = 0
-                    if len(end_idx) > 0:
-                        end_idx = end_idx[0]
-                        if len(end_idx) > 0:
-                            end_idx = end_idx[0]
-                            if end_idx > 0:
-                                speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:end_idx+1])
-                                print('Real:', speaker[0], ' '.join(words[0]))
-                                printed = 1
-                    if printed == 0 and words_padded_decode[i, 1].sum() > 0:
-                        try:
-                            speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i]), None, words_padded_decode[i:i+1,:])
-                            print('Real:', speaker[0], ' '.join(words[0]))
-                            printed = 1
-                        except:
-                            print('Exception Triggered. Received:', words_padded_decode[i:i+1,:])
-                            break
-                    if printed == 0:
-                        break
-    
-                    end_idx = np.where(greedy_responses[i,:]==eos)
-                    printed = 0
-                    if len(end_idx) > 0:
-                        end_idx = end_idx[0]
-                        if len(end_idx) > 0:
-                            end_idx = end_idx[0]
-                            if end_idx > 0:
-                                speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:end_idx+1])
-                                print('Fake:', speaker[0], ' '.join(words[0]))
-                                printed = 1
-                    if printed == 0:
-                        speaker, _, words = dataset.translate_item(tonumpy(speaker_padded[0:1, i+1]), None, greedy_responses[i:i+1,:])
-                        print('Fake:', speaker[0], ' '.join(words[0]))
-                    if words_padded_decode[i, 1].sum() == 0:
-                        break
-            time_decode += time.time() - start_decode
-            '''
+            print_greedy_decode(words_padded, greedy_responses, greedy_values)
+        
         if itr % 10 == 0:
             print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(np.min((10, tonumpy(loss)))))
-
-    
