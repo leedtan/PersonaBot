@@ -81,9 +81,9 @@ class Dense(NN.Module):
         h = self.linear2(h)
         return T.cat((x, self.relu(h)),1)
 
-def encode_sentence(x, layers, size, lengths, cells):
+def encode_sentence(x, num_layers, size, lengths, cells):
     prev_layer = x
-    for idx in range(layers):
+    for idx in range(num_layers):
         h,c = nn.bidirectional_dynamic_rnn(
             cell_fw=cells[idx][0], cell_bw=cells[idx][1],
             inputs=prev_layer,
@@ -100,9 +100,9 @@ def encode_sentence(x, layers, size, lengths, cells):
     output_layer = prev_layer[:,-1,:]
     return output_layer
 
-def encode_context(x, layers, size, lengths, cells):
+def encode_context(x, num_layers, size, lengths, cells):
     prev_layer = x
-    for idx in range(layers):
+    for idx in range(num_layers):
         prev_layer,c = nn.dynamic_rnn(
             cell=cells[idx],
             inputs=prev_layer,
@@ -116,9 +116,9 @@ def encode_context(x, layers, size, lengths, cells):
             )
     return prev_layer
 
-def decode(x, layers, size, lengths, cells):
+def decode(x, num_layers, size, lengths, cells):
     prev_layer = x
-    for idx in range(layers):
+    for idx in range(num_layers):
         prev_layer,c = nn.dynamic_rnn(
             cell=cells[idx],
             inputs=prev_layer,
@@ -170,7 +170,6 @@ class Model():
         '''
         self.mask = tf.stack([tf.concat((tf.ones(sent_len), tf.zeros(self.max_sentence_length - sent_len))) 
             for sent_len in self.sentence_lengths_flat], 0)
-    
         '''
         self.mask_flat = tf.cast(tf.reshape(self.mask, [-1]), tf.float32)
         self.mask_expanded = tf.reshape(self.mask, [self.batch_size, self.max_conv_len, self.max_sent_len])
@@ -182,6 +181,7 @@ class Model():
         
         self.wd_emb = tf.nn.embedding_lookup(self.wd_mat, self.wd_ind)
         self.usr_emb = tf.nn.embedding_lookup(self.usr_mat, self.usr_ind)
+        self.usr_emb_flat = tf.reshape(self.usr_emb, [-1, size_usr])
         self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
@@ -198,13 +198,13 @@ class Model():
         #        self.batch_size, self.max_conv_len, self.max_sent_len, self.size_wd + self.size_usr])
         
         self.sentence_encs = encode_sentence(
-                x=self.sent_input, layers=layers_enc, size = size_enc, 
+                x=self.sent_input, num_layers=layers_enc, size = size_enc, 
                 lengths=self.sentence_lengths_flat, cells = self.sent_rnns)
         
         sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
         
         self.context_encs = encode_context(
-                x = sentence_encs, layers = layers_ctx, size = size_ctx,
+                x = sentence_encs, num_layers = layers_ctx, size = size_ctx,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns)
         
         #batch, messages, (expansion needed), emb_dim
@@ -215,18 +215,46 @@ class Model():
         self.dec_inputs = tf.reshape(dec_inputs, [-1, self.max_sent_len,self.size_ctx + self.size_wd + self.size_usr])
         
         self.target = self.wd_ind[:,1:, :]
+        self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len])
         self.target_flat = tf.reshape(self.target, [-1])
         
         self.decoder_out = decode(
-                x = self.dec_inputs, layers=layers_dec, size=size_dec,
+                x = self.dec_inputs, num_layers=layers_dec, size=size_dec,
                 lengths = self.sentence_lengths_flat, cells = self.dec_rnns)
         #decoder out is message0: message-1
         self.decoder_deep = tf.reshape(
                 self.decoder_out, (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec))
         self.decoder_out_for_ppl = tf.reshape(self.decoder_deep[:,:-1,:,:],(-1, size_dec))
-        self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds)
+        self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
         self.dec_relu = lrelu(self.dec_raw)
+        self.dec_relu_shaped = tf.reshape(
+                self.dec_relu, [self.batch_size *  (self.max_conv_len-1), self.max_sent_len, self.num_wds])
+        self.mask_flat_decode = tf.cast(
+                tf.reshape(self.mask_decode, [self.batch_size * (self.max_conv_len-1), self.max_sent_len]),
+                tf.float32)
         
+        self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
+        self.ppl_loss_masked = self.ppl_loss_raw = tf.contrib.seq2seq.sequence_loss(
+            logits = self.dec_relu_shaped,
+            targets = self.target_decode,
+            weights = self.mask_flat_decode,
+            average_across_timesteps=False,
+            average_across_batch=False,
+            softmax_loss_function=None,
+            name=None
+        )
+        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(self.ppl_loss_masked, 1), 0)/tf.reduce_sum(self.mask_flat_decode)
+        self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
+                max_length = 30, start_token = dataset.index_word(START))
+        '''
+        start = dataset.index_word(START)
+        eos = dataset.index_word(EOS)
+        unk = dataset.index_word(UNKNOWN)
+        self.ppl_loss_raw = tf.nn.softmax_cross_entropy_with_logits(
+                labels = self.labels, logits = self.dec_relu)
+        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
+        self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
+        '''
         '''
         tf.nn.sampled_softmax_loss(
             weights,
@@ -299,13 +327,13 @@ class Model():
             partition_strategy='mod',
             name='sampled_softmax_loss'
         )
-        '''
         
         self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
         self.ppl_loss_raw = tf.nn.softmax_cross_entropy_with_logits(
                 labels = self.labels, logits = self.dec_relu)
-        self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
-        self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
+        '''
+        #self.ppl_loss_masked =  self.ppl_loss_raw * self.mask_flat_decode
+        #self.ppl_loss = tf.reduce_sum(self.ppl_loss_masked)/tf.reduce_sum(self.mask_flat_decode)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         
         gvs = optimizer.compute_gradients(self.ppl_loss * 1000)
@@ -317,7 +345,31 @@ class Model():
         capped_gvs = [(tf.clip_by_norm(grad, clip_norm), var) for grad, var in capped_gvs if grad is not None]
         self.optimizer = optimizer.apply_gradients(capped_gvs)
         
-        
+    def decode_greedy(self, num_layers, max_length, start_token):
+        # = tf.concat(
+        #           (tf.tile(tf.expand_dims(self.context_encs, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
+        ctx_flat = tf.reshape(self.context_encs, [-1, self.size_ctx])
+        words = []
+        pre_argmax_values = []
+        start_embedding = tf.expand_dims(tf.nn.embedding_lookup(self.wd_mat, tf.expand_dims(start_token, -1)), 0)
+        start_embedding = tf.tile(start_embedding, [self.batch_size, self.max_conv_len, 1])
+        start_usrs = tf.concat((start_embedding, self.usr_emb), 2)
+        prev_layer = tf.concat((self.context_encs, start_usrs), -1)
+        prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
+        prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
+        prev_layer = tf.reshape(prev_layer, [-1, self.size_dec + self.size_wd + self.size_usr])
+        for _ in range(max_length):
+            for idx in range(num_layers):
+                prev_layer,prev_state[idx] =self.dec_rnns[idx](inputs = prev_layer, state = prev_state[idx])
+            prev_layer = layers.dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
+            next_words = tf.argmax(prev_layer, -1)
+            words.append(next_words)
+            pre_argmax_values.append(prev_layer)
+            wd_embeddings = tf.nn.embedding_lookup(self.wd_mat, next_words)
+            wds_usrs = tf.concat((wd_embeddings, self.usr_emb_flat), -1)
+            prev_layer = tf.concat((ctx_flat, wds_usrs), -1)
+        return words, pre_argmax_values
+
         
  
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
@@ -484,7 +536,7 @@ model = Model(layers_enc=1, layers_ctx=1, layers_dec=1,
                  num_wds = num_words+1,num_usrs = num_usrs+1)
 
 
-
+start = dataset.index_word(START)
 eos = dataset.index_word(EOS)
 unk = dataset.index_word(UNKNOWN)
 
@@ -584,7 +636,7 @@ while True:
             feed_dict_dbg = {self.dec_relu : np.stack([np.arange(40000),np.arange(40000-1,-1,-1)]),
                              self.target_flat : np.array([39999,0], dtype = np.int32)}
 
-            feed_dict_1 = {self.dec_softmaxed : np.stack([np.arange(40000),np.arange(40000-1,-1,-1)])}
+            #feed_dict_1 = {self.dec_softmaxed : np.stack([np.arange(40000),np.arange(40000-1,-1,-1)])}
             feed_dict_2 = {self.target_flat : np.array([0,5], dtype = np.int32)}
             #sess.run([self.dec_softmaxed,self.target_flat], feed_dict_dbg)
             #sess.run([self.dec_softmaxed], feed_dict_1)
@@ -636,194 +688,11 @@ while True:
                     itr
                     )
         if itr % 100 == 0:
-            a = 2
-        time_train += time.time() - start_train
-        #TODO 
-        if itr % scatter_entropy_freq == 0 and 0:
-            prob =  sess.run(model.dec_softmaxed,
-                    feed_dict=feed_dict)
-            #prob, _ = decoder(ctx[:1,:-1], wds_first_sentence_removed[:1,:,:].contiguous(),
-            #                     usrs_decode[:1:], sentence_lengths_padded[:1,1:])
-            #Entropy defined as H here:https://en.wikipedia.org/wiki/Entropy_(information_theory)
-            
-            #mask = 
-            #mask = mask_4d(prob.size(), turns[:1] -1 , sentence_lengths_padded[:1,1:])
-            prob = prob.reshape(batch_size, max_turns-1, max_words,-1)
-            prob[:,turns[:1]:,:,:] = 0
-            Entropy = (np.exp(prob) * prob * -1) * mask
-            Entropy_per_word = Entropy.sum(-1)
-            Entropy_per_word = tonumpy(Entropy_per_word)[0]
-            #E_mean = tonumpy(Entropy_per_word.sum() / mask.sum())[0]
-            #E_mean, E_std, E_max, E_min = tonumpy(
-            #        Entropy_per_word.mean(), Entropy.std(), Entropy.max(), Entropy.min())
-            E_mean = np.nanmean(Entropy_per_word)
-            train_writer.add_summary(
-                tf.Summary(
-                    value=[
-                        tf.Summary.Value(tag='Entropy_mean', simple_value=E_mean)
-                        ]
-                    ),
-                itr
-            )
+            greedy_words, greedy_values = model.sess.run(
+                    [self.greedy_words, self.greedy_pre_argmax],
+                    feed_dict = feed_dict)
             '''
-            E_mean, E_std, E_max, E_min = \
-                    np.nanmean(Entropy_per_word), np.nanstd(Entropy_per_word), \
-                    np.nanmax(Entropy_per_word), np.nanmin(Entropy_per_word)
-            
-            
-            #E_mean, E_std, E_max, E_min = [e[0] for e in [E_mean, E_std, E_max, E_min]]
-            train_writer.add_summary(
-                tf.Summary(
-                    value=[
-                        tf.Summary.Value(tag='Entropy_mean', simple_value=E_mean),
-                        tf.Summary.Value(tag='Entropy_std', simple_value=E_std),
-                        tf.Summary.Value(tag='Entropy_max', simple_value=E_max),
-                        tf.Summary.Value(tag='Entropy_min', simple_value=E_min),
-                        ]
-                    ),
-                itr
-                )
-            '''
-            if args.adversarial_sample == 1 and itr > 1000:
-                '''add_scatterplot(train_writer, losses=[adv_emb_diffs, adv_sent_diffs, adv_ctx_diffs], 
-                                scales=[adv_emb_scales, adv_sent_scales, adv_ctx_scales], 
-                                names=['embeddings', 'sentence', 'context'], itr = itr, 
-                                log_dir = log_train, tag = 'scatterplot', style=adv_style)
-                '''
-                adv_emb_diffs = []
-                adv_sent_diffs = []
-                adv_ctx_diffs = []
-                adv_emb_scales = []
-                adv_sent_scales = []
-                adv_ctx_scales = []
-        # ...Tensorboard viz end
-
-        # Train with Policy Gradient on BLEU scores once for a while.
-        if itr % 10 == 0 and itr > 100 and 0:
-            start_decode = time.time()
-            #enable_eval([user_emb, word_emb, enc, context, decoder])
-            greedy_responses, logprobs = decoder.greedyGenerateBleu(
-                    ctx[:1,:-1,:].view(-1, size_context + size_attn),
-                      usrs_decode[:1,:,:].view(-1, size_usr), word_emb, dataset)
-            # Only take the first turns[0] responses
-            greedy_responses = greedy_responses[:turns[0]]
-            logprobs = logprobs[:turns[0]]
-            reference = tonumpy(words_padded[0,1:turns[0],:])
-            hypothesis = tonumpy(greedy_responses)
-            logprobs_np = tonumpy(logprobs)
-            
-            # Compute BLEU scores
-            real_sent = []
-            gen_sent = []
-            BLEUscores = []
-            BLEUscoresplot = []
-            lengths_gen = []
-            batch_words = Counter()
-            batch_bigrams = Counter()
-            batch_trigrams = Counter()
-            smoother = bleu_score.SmoothingFunction()
-            for idx in range(reference.shape[0]):
-                real_sent.append(reference[idx, :sentence_lengths_padded[0,idx]])
-                num_words = np.where(hypothesis[idx,:]==eos)[0]
-                if len(num_words) < 1:
-                    num_words = hypothesis.shape[1]
-                else:
-                    num_words = num_words[0]
-                lengths_gen.append(num_words)
-                gen_sent.append(hypothesis[idx, :num_words+1])
-                batch_words.update(gen_sent[-1][1:])
-                batch_bigrams.update([tuple(gen_sent[-1][i:i+2]) for i in range(len(gen_sent[-1]))])
-                batch_trigrams.update([tuple(gen_sent[-1][i:i+3]) for i in range(len(gen_sent[-1])-1)])
-                curr_bleu = bleu_score.sentence_bleu(
-                        [real_sent[-1]], gen_sent[-1], smoothing_function=smoother.method1)
-                BLEUscoresplot.append(curr_bleu)
-                curr_bleu += num_words / (1+np.sqrt(itr))
-                
-                #curr_bleu += extra_penalty[num_words]/(1+np.sqrt(itr))
-                BLEUscores.append(curr_bleu)
-            
-            # Use BLEU scores as reward, comparing it to baseline (moving average)
-            baseline = np.mean(BLEUscores) if baseline is None else baseline * 0.5 + np.mean(BLEUscores) * 0.5
-            reward = np.array(BLEUscores) - baseline
-            reward = reward.reshape(-1, 1).repeat(logprobs_np.shape[1], axis=1)
-            total_words = sum(batch_words.values())
-            total_bigrams = max([10, sum(batch_bigrams.values())])
-            total_trigrams = max([10, sum(batch_trigrams.values())])
-            tot_unigram_penalty = 0
-            tot_bigram_penalty = 0
-            tot_trigram_penalty = 0
-            for sentence_idx in range(hypothesis.shape[0]):
-                for word_idx in range(1,lengths_gen[sentence_idx]):
-                    unigram_count = batch_words[hypothesis[sentence_idx,word_idx]]
-                    if unigram_count > 6:
-                        unigram_penalty = (unigram_count/total_words)**2 * 1
-                        reward[sentence_idx,word_idx-1] -= unigram_penalty * args.lambda_repetitive
-                        tot_unigram_penalty += unigram_penalty * args.lambda_repetitive
-            
-            for sentence_idx in range(hypothesis.shape[0]):
-                for word_idx in range(0,lengths_gen[sentence_idx]):
-                    bigram_count = batch_bigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+2])]
-                    if bigram_count > 4:
-                        #.1 is transition. yields .02, and .02
-                        bigram_penalty = (bigram_count / total_bigrams) * .1 + \
-                            ((bigram_count / total_bigrams) ** 2) * 1
-                        min_c = max([word_idx-1,0])
-                        for ci in range(min_c, word_idx+1):
-                            if ci >= reward.shape[1]:
-                                continue
-                            reward[sentence_idx,ci] -= bigram_penalty * args.lambda_repetitive
-                            tot_bigram_penalty += bigram_penalty * args.lambda_repetitive
-            
-            for sentence_idx in range(hypothesis.shape[0]):
-                for word_idx in range(0,lengths_gen[sentence_idx]-1):
-                    trigram_count = batch_trigrams[tuple(hypothesis[sentence_idx,word_idx:word_idx+3])]
-                    if trigram_count > 2:
-                        #.1 is transition of loss importance. yields .03 from first loss, .03 from second loss
-                        trigram_penalty = (trigram_count / total_trigrams) * 1 + \
-                            ((trigram_count / total_trigrams) ** 2) * 10
-                        min_c = max([word_idx-1,0])
-                        #max_c = min([word_idx+1, reward.shape[1]])
-                        for ci in range(min_c, word_idx + 2):
-                            if ci >= reward.shape[1]:
-                                continue
-                            reward[sentence_idx,ci] -= trigram_penalty * args.lambda_repetitive
-                            tot_trigram_penalty += trigram_penalty * args.lambda_repetitive
-                        
-            if not np.all(~np.isnan(tonumpy(reward))):
-                print('crash 5')
-                continue
-            #assert np.all(~np.isnan(reward))
-            for idx in range(reference.shape[0]):
-                if lengths_gen[idx] < reward.shape[1]:
-                    reward[idx,lengths_gen[idx]:] = 0
-            
-            # Set the head gradients of the log-probabilities as negative of reward
-            opt.zero_grad()
-            logprobs.backward(args.lambda_pg * -cuda(T.Tensor(reward.T)))
-            pg_grads = {p: p.grad.data.clone() for p in params if p.grad is not None}
-            pg_grad_norm = sum(T.norm(v) for v in pg_grads.values()) ** 0.5
-            if itr % 10 == 0:
-                print('Grad norm', grad_norm, 'PG Grad norm', pg_grad_norm)
-            train_writer.add_summary(
-                    tf.Summary(
-                        value=[
-                            tf.Summary.Value(tag='Average BLEU', simple_value=np.mean(BLEUscoresplot)),
-                            tf.Summary.Value(tag='pg_grad_norm', simple_value=pg_grad_norm),
-                            tf.Summary.Value(tag='unigram_penalty', simple_value=tot_unigram_penalty),
-                            tf.Summary.Value(tag='bigram_penalty', simple_value=tot_bigram_penalty),
-                            tf.Summary.Value(tag='trigram_penalty', simple_value=tot_trigram_penalty),
-                            ]
-                        ),
-                    itr
-                    )
-            '''
-            for idx in range(reference.shape[0]):
-                greedy_responses[idx,:num_words].reinforce(BLEUscores[idx] - baseline)
-            '''
-
-            # Dump...
-            #print('REAL:',dataset.translate_item(None, None, tonumpy(words_padded[:1,:,:])))
-            if itr % 100 == -1:
+             if itr % 100 == -1:
                 greedy_responses = tonumpy(greedy_responses)
                 
                 words_padded_decode = tonumpy(words_padded[0,:,:])
@@ -866,33 +735,8 @@ while True:
                     if words_padded_decode[i, 1].sum() == 0:
                         break
             time_decode += time.time() - start_decode
-        
-        # After all these gibberish, add back the recorded grads from PPL and take a step
-       
-        if itr % 10000 == 0:
-            T.save(user_emb, '%s-user_emb-%08d' % (modelnamesave, itr))
-            T.save(word_emb, '%s-word_emb-%08d' % (modelnamesave, itr))
-            T.save(enc, '%s-enc-%08d' % (modelnamesave, itr))
-            T.save(context, '%s-context-%08d' % (modelnamesave, itr))
-            T.save(decoder, '%s-decoder-%08d' % (modelnamesave, itr))
+            '''
         if itr % 10 == 0:
             print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(np.min((10, tonumpy(loss)))))
 
     
-    # Testing: during test time none of wds_b, ctx and sentence_lengths_padded is known.
-    # We need to manually unroll the LSTMs.
-    #decoded = decoder(ctx[:, :-1:], wds_b[:, 1:, :], None,
-    #                  usrs_b[:, 1:,], sentence_lengths_padded[:, 1:])
-    #print(decoded)
-
-
-# Usage:
-# dataset = UbuntuDialogDataset('../ubuntu-ranking-dataset-creator/src/dialogs', 'wordcount.pkl', 'usercount.pkl')
-# dataloader = UbuntuDialogDataLoader(dataset, 16)
-# for item in dataloader:
-#     turns, sentence_lengths_padded, speaker_padded, addressee_padded, words_padded, words_reverse_padded = item
-#     ...
-#
-# wordcount.pkl and usercount.pkl are generated from stage1 parser.
-# If you want asynchronous data loading, use something like
-# dataloader = UbuntuDialogDataLoader(dataset, 16, 4)
