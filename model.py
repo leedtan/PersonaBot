@@ -291,9 +291,8 @@ class Model():
         
         sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
         ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
-        self.ctx_init_states = [
-                layers.dense(ctx_input_init, size_ctx)
-                for _ in range(layers_ctx)]
+        
+        self.ctx_init_states = [layers.dense(ctx_input_init, size_ctx) for _ in range(layers_ctx)]
         self.context_encs = encode_context(
                 x = sentence_encs, num_layers = layers_ctx, size = size_ctx,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns, initial_states = self.ctx_init_states)
@@ -314,9 +313,9 @@ class Model():
                 head=self.context_masked, 
                 history=self.last_layer_enc_attend_masked, 
                 head_shape = [self.batch_size, self.max_conv_len, self.size_ctx],
+                history_shape = [self.batch_size, self.max_conv_len, self.max_sent_len, self.size_enc],
                 head_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_ctx], 
                 history_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_enc],
-                history_shape = [self.batch_size, self.max_conv_len, self.max_sent_len, self.size_enc],
                 head_expand_dims = [(2, self.max_conv_len), (3, self.max_sent_len)], 
                 history_expand_dims = [(1, self.max_conv_len)], 
                 history_rollup_dims = [(2, self.max_conv_len),(3, self.max_sent_len)],
@@ -324,16 +323,14 @@ class Model():
         self.ctx_wd_attn = self.context_wd_Attention.attended_history_rolledup
         self.context_encs_with_attn = tf.concat((self.context_encs, self.ctx_wd_attn), 2)
         
-        self.ctx_init_states_2 = [
-                layers.dense(ctx_input_init, size_ctx)
-                for _ in range(layers_ctx)]
+        self.ctx_init_states_2 = [layers.dense(ctx_input_init, size_ctx) for _ in range(layers_ctx)]
         self.context_encs_second_rnn = encode_context(
                 x = self.context_encs_with_attn, num_layers = layers_ctx_2, size = size_ctx_2,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2,
                 initial_states = self.ctx_init_states_2, name = 'ctx_2_')
         
         self.context_encs_final = tf.concat((self.context_encs_with_attn, self.context_encs_second_rnn), 2)
-        
+        self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2
         dec_inputs = tf.concat(
                 (tf.tile(tf.expand_dims(self.context_encs_final, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
         
@@ -345,21 +342,10 @@ class Model():
         self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len-1])
         #self.target_flat = tf.reshape(self.target, [-1])
         
-        
-        sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
-        
-        sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
-        ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
-        
-        dec_input_init = tf.reshape(
-                self.context_encs_final, 
+        dec_input_init = tf.reshape(self.context_encs_final, 
                 [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
         
-        
-        
-        self.dec_init_states = [
-                layers.dense(dec_input_init, size_dec)
-                for _ in range(layers_dec)]
+        self.dec_init_states = [layers.dense(dec_input_init, size_dec) for _ in range(layers_dec)]
         
         self.decoder_out = decode(
                 x = self.dec_inputs, num_layers=layers_dec, size=size_dec,
@@ -367,7 +353,27 @@ class Model():
         #decoder out is message0: message-1
         self.decoder_deep = tf.reshape(
                 self.decoder_out, (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec))
-        self.decoder_out_for_ppl = tf.reshape(self.decoder_deep[:,:-1,:,:],(-1, size_dec))
+        
+        #self.context_encs starts as [B, C, V]
+        #self.decoder_deep starts as [B,C,S,V]
+        #Context becomes [B, CDuplicate, C, SDuplicate, V]
+        #Decoder becomes [B, C, CDuplicate, S, V]
+        #Sum over last layer index 2
+        self.dec_ctx_Attention= Attention(
+                head=self.decoder_deep, 
+                history=self.context_encs_final, 
+                head_shape = [self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec],
+                history_shape = [self.batch_size, self.max_conv_len, self.size_ctx_final],
+                head_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_dec], 
+                history_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_ctx_final],
+                head_expand_dims = [(2, self.max_conv_len)], 
+                history_expand_dims = [(1, self.max_conv_len),(4, self.max_sent_len)], 
+                history_rollup_dims = [(2, self.max_conv_len)],
+                name='dec_ctx_attn')
+        self.dec_ctx_attn = self.dec_ctx_Attention.attended_history_rolledup
+        self.decoder_with_attn = tf.concat((self.decoder_deep, self.dec_ctx_attn), -1)
+        self.size_dec_final = size_dec + size_ctx
+        self.decoder_out_for_ppl = tf.reshape(self.decoder_with_attn[:,:-1,:,:],(-1, self.size_dec_final))
         self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
         self.dec_relu = lrelu(self.dec_raw)
         self.dec_relu_shaped = tf.reshape(
@@ -410,6 +416,7 @@ class Model():
         start_embedding = tf.tile(start_embedding, [self.batch_size, self.max_conv_len, 1])
         start_usrs = tf.concat((start_embedding, self.usr_emb_decode), 2)
         prev_layer = tf.concat((self.context_encs_final, start_usrs), -1)
+        context_encs_final = self.context_encs_final[0,:,:]
         #prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
         #prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
         prev_state = self.dec_init_states
@@ -418,6 +425,21 @@ class Model():
         for _ in range(max_length):
             for idx in range(num_layers):
                 prev_layer,prev_state[idx] =self.dec_rnns[idx](inputs = prev_layer, state = prev_state[idx])
+                
+            
+            dec_ctx_Attention= Attention(
+                head=prev_layer, 
+                history=context_encs_final, 
+                head_shape = [self.max_conv_len, self.size_dec],
+                history_shape = [self.max_conv_len, self.size_ctx_final],
+                head_expanded_shape = [self.max_conv_len, self.max_conv_len, self.size_dec], 
+                history_expanded_shape = [self.max_conv_len, self.max_conv_len, self.size_ctx_final],
+                head_expand_dims = [(1, self.max_conv_len)], 
+                history_expand_dims = [(0, self.max_conv_len)], 
+                history_rollup_dims = [(1, self.max_conv_len)],
+                name='dec_ctx_attn')
+            dec_ctx_attn = dec_ctx_Attention.attended_history_rolledup
+            prev_layer = tf.concat((prev_layer,dec_ctx_attn),-1)
             prev_layer = layers.dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
             next_words = tf.argmax(prev_layer, -1)
             words.append(next_words)
