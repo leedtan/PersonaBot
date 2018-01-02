@@ -140,15 +140,15 @@ class Attention():
     
     
 
-def encode_sentence(x, num_layers, size, lengths, cells):
+def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
     prev_layer = x
     for idx in range(num_layers):
         h,c = nn.bidirectional_dynamic_rnn(
             cell_fw=cells[idx][0], cell_bw=cells[idx][1],
             inputs=prev_layer,
             sequence_length=lengths,
-            initial_state_fw=None,
-            initial_state_bw=None,
+            initial_state_fw=initial_states[idx][0],
+            initial_state_bw=initial_states[idx][1],
             dtype=tf.float32,
             parallel_iterations=None,
             swap_memory=False,
@@ -159,14 +159,14 @@ def encode_sentence(x, num_layers, size, lengths, cells):
     output_layer = prev_layer[:,-1,:]
     return output_layer, prev_layer
 
-def encode_context(x, num_layers, size, lengths, cells, name='ctx'):
+def encode_context(x, num_layers, size, lengths, cells,initial_states, name='ctx'):
     prev_layer = x
     for idx in range(num_layers):
         prev_layer,c = nn.dynamic_rnn(
             cell=cells[idx],
             inputs=prev_layer,
             sequence_length=lengths,
-            initial_state=None,
+            initial_state=initial_states[idx],
             dtype=tf.float32,
             parallel_iterations=None,
             swap_memory=False,
@@ -176,14 +176,14 @@ def encode_context(x, num_layers, size, lengths, cells, name='ctx'):
         prev_layer = lrelu(prev_layer)
     return prev_layer
 
-def decode(x, num_layers, size, lengths, cells):
+def decode(x, num_layers, size, lengths, cells,initial_states):
     prev_layer = x
     for idx in range(num_layers):
         prev_layer,c = nn.dynamic_rnn(
             cell=cells[idx],
             inputs=prev_layer,
             sequence_length=lengths,
-            initial_state=None,
+            initial_state=initial_states[idx],
             dtype=tf.float32,
             parallel_iterations=None,
             swap_memory=False,
@@ -192,6 +192,19 @@ def decode(x, num_layers, size, lengths, cells):
             )
         prev_layer = lrelu(prev_layer)
     return prev_layer
+
+def prepare_inputs(prev_layer, prev_layer_size, size, layers, bidirectional=False):
+    
+    layer_reshaped = tf.reshape(prev_layer, [-1, prev_layer_size])
+    
+    
+    '''
+        self.sent_input = tf.reshape(self.wds_usrs,[-1, self.max_sent_len, self.size_wd + self.size_usr])
+        
+        self.sent_init_states = [
+                (layers.dense(self.sent_input, size_enc//2), layers.dense(self.sent_input, size_enc//2))
+                for _ in range(layers_enc)
+    '''
 
 class Model():
     def __init__(self, layers_enc=1, layers_ctx=1, layers_ctx_2=1,
@@ -230,6 +243,8 @@ class Model():
         
         self.max_sentence_length = tf.reduce_max(self.sentence_lengths)
         
+        self.mask_ctx = tf.cast(tf.sequence_mask(self.conv_lengths_flat), tf.float32)
+        self.mask_ctx_expanded = tf.reshape(self.mask_ctx, [self.batch_size, self.max_conv_len])
         self.mask = tf.cast(tf.sequence_mask(self.sentence_lengths_flat), tf.float32)
         self.mask_expanded = tf.reshape(self.mask, [self.batch_size, self.max_conv_len, self.max_sent_len])
         self.mask_decode = self.mask_expanded[:,1:,1:]
@@ -246,7 +261,8 @@ class Model():
         self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
-        
+        self.mask_expanded_wds_usrs = tf.tile(tf.expand_dims(self.mask_expanded, -1), [1,1,1, self.size_wd+self.size_usr])
+        self.wds_usrs = self.wds_usrs * self.mask_expanded_wds_usrs
         self.sent_rnns = [[GRUCell(size_enc//2, kernel_initializer=tf.contrib.layers.xavier_initializer()),
                            GRUCell(size_enc//2, kernel_initializer=tf.contrib.layers.xavier_initializer())]
             for _ in range(layers_enc)]
@@ -259,15 +275,28 @@ class Model():
         
         self.sent_input = tf.reshape(self.wds_usrs,[-1, self.max_sent_len, self.size_wd + self.size_usr])
         
+        self.sent_mask_contributions = tf.reshape(tf.reduce_sum(
+                self.mask_expanded_wds_usrs,2),[ -1, self.size_wd + self.size_usr])
+        
+        self.sent_input_init = tf.reduce_sum(self.sent_input, 1)/self.sent_mask_contributions
+        
+        self.sent_init_states = [
+                (layers.dense(self.sent_input_init, size_enc//2), layers.dense(self.sent_input_init, size_enc//2))
+                for _ in range(layers_enc)]
         self.sentence_encs, self.last_layer_enc = encode_sentence(
                 x=self.sent_input, num_layers=layers_enc, size = size_enc, 
-                lengths=self.sentence_lengths_flat, cells = self.sent_rnns)
+                lengths=self.sentence_lengths_flat, cells = self.sent_rnns, initial_states = self.sent_init_states)
         
         sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
         
+        sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
+        ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
+        self.ctx_init_states = [
+                layers.dense(ctx_input_init, size_ctx)
+                for _ in range(layers_ctx)]
         self.context_encs = encode_context(
                 x = sentence_encs, num_layers = layers_ctx, size = size_ctx,
-                lengths = self.conv_lengths_flat, cells = self.ctx_rnns)
+                lengths = self.conv_lengths_flat, cells = self.ctx_rnns, initial_states = self.ctx_init_states)
 
         self.last_layer_enc_attend = tf.reshape(
                 self.last_layer_enc, [self.batch_size, self.max_conv_len, self.max_sent_len, self.size_enc])
@@ -295,9 +324,13 @@ class Model():
         self.ctx_wd_attn = self.context_wd_Attention.attended_history_rolledup
         self.context_encs_with_attn = tf.concat((self.context_encs, self.ctx_wd_attn), 2)
         
+        self.ctx_init_states_2 = [
+                layers.dense(ctx_input_init, size_ctx)
+                for _ in range(layers_ctx)]
         self.context_encs_second_rnn = encode_context(
                 x = self.context_encs_with_attn, num_layers = layers_ctx_2, size = size_ctx_2,
-                lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2, name = 'ctx_2_')
+                lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2,
+                initial_states = self.ctx_init_states_2, name = 'ctx_2_')
         
         self.context_encs_final = tf.concat((self.context_encs_with_attn, self.context_encs_second_rnn), 2)
         
@@ -312,9 +345,25 @@ class Model():
         self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len-1])
         #self.target_flat = tf.reshape(self.target, [-1])
         
+        
+        sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
+        
+        sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
+        ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
+        
+        dec_input_init = tf.reshape(
+                self.context_encs_final, 
+                [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
+        
+        
+        
+        self.dec_init_states = [
+                layers.dense(dec_input_init, size_dec)
+                for _ in range(layers_dec)]
+        
         self.decoder_out = decode(
                 x = self.dec_inputs, num_layers=layers_dec, size=size_dec,
-                lengths = self.sentence_lengths_flat, cells = self.dec_rnns)
+                lengths = self.sentence_lengths_flat, cells = self.dec_rnns, initial_states = self.dec_init_states)
         #decoder out is message0: message-1
         self.decoder_deep = tf.reshape(
                 self.decoder_out, (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec))
@@ -361,8 +410,9 @@ class Model():
         start_embedding = tf.tile(start_embedding, [self.batch_size, self.max_conv_len, 1])
         start_usrs = tf.concat((start_embedding, self.usr_emb_decode), 2)
         prev_layer = tf.concat((self.context_encs_final, start_usrs), -1)
-        prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
-        prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
+        #prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
+        #prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
+        prev_state = self.dec_init_states
         prev_layer = tf.reshape(
                 prev_layer, [-1, self.size_ctx + self.size_wd + self.size_usr + self.size_enc + self.size_ctx_2])
         for _ in range(max_length):
@@ -394,12 +444,12 @@ parser.add_argument('--layers_ctx_2', type=int, default=1)
 parser.add_argument('--layers_dec_2', type=int, default=1)
 parser.add_argument('--size_enc', type=int, default=32)
 parser.add_argument('--size_attn', type=int, default=0)
-parser.add_argument('--size_ctx', type=int, default=64)
-parser.add_argument('--size_dec', type=int, default=128)
-parser.add_argument('--size_ctx_2', type=int, default=64)
-parser.add_argument('--size_dec_2', type=int, default=128)
-parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=32)
+parser.add_argument('--size_ctx', type=int, default=32)
+parser.add_argument('--size_dec', type=int, default=64)
+parser.add_argument('--size_ctx_2', type=int, default=32)
+parser.add_argument('--size_dec_2', type=int, default=64)
+parser.add_argument('--size_usr', type=int, default=8)
+parser.add_argument('--size_wd', type=int, default=16)
 parser.add_argument('--weight_decay', type=float, default=1e-3)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
