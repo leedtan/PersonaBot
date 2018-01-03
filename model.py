@@ -259,7 +259,7 @@ class Model():
         self.usr_emb_decode = tf.concat((self.usr_emb[:,1:,:], self.usr_emb[:,-2:-1,:]), 1)
         self.usr_emb_decode_flat = tf.reshape(self.usr_emb_decode, [-1, size_usr])
         self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
-        dec_input_init = tf.reduce_max(self.usr_emb, 1)
+        self.dec_input_init = tf.reshape(self.usr_emb, [-1, self.size_usr])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
         self.mask_expanded_wds_usrs = tf.tile(tf.expand_dims(self.mask_expanded, -1), [1,1,1, self.size_wd+self.size_usr])
@@ -324,7 +324,7 @@ class Model():
         self.ctx_wd_attn = self.context_wd_Attention.attended_history_rolledup
         self.context_encs_with_attn = tf.concat((self.context_encs, self.ctx_wd_attn), 2)
         
-        self.ctx_init_states_2 = [layers.dense(ctx_input_init, size_ctx) for _ in range(layers_ctx)]
+        self.ctx_init_states_2 = [layers.dense(ctx_input_init, size_ctx_2) for _ in range(layers_ctx_2)]
         self.context_encs_second_rnn = encode_context(
                 x = self.context_encs_with_attn, num_layers = layers_ctx_2, size = size_ctx_2,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2,
@@ -346,7 +346,7 @@ class Model():
         #dec_input_init = tf.reshape(self.context_encs_final, 
         #        [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
         
-        self.dec_init_states = [layers.dense(dec_input_init, size_dec) for _ in range(layers_dec)]
+        self.dec_init_states = [layers.dense(self.dec_input_init, size_dec) for _ in range(layers_dec)]
         
         self.decoder_out = decode(
                 x = self.dec_inputs, num_layers=layers_dec, size=size_dec,
@@ -390,14 +390,14 @@ class Model():
             name=None
         )
         self.ppl_loss = tf.reduce_sum(tf.reduce_sum(tf.pow(
-                self.ppl_loss_masked, 2.0), 1), 0)/tf.reduce_sum(self.mask_flat_decode)
+                self.ppl_loss_masked, 1.5), 1), 0)/tf.reduce_sum(self.mask_flat_decode)
         self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
                 max_length = 30, start_token = dataset.index_word(START))
         
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
         self.weight_norm = tf.reduce_mean([tf.reduce_sum(tf.square(var)) for var in self.tfvars])*weight_decay
-        loss = (self.ppl_loss + self.weight_norm * 0)*1e2
+        loss = (self.ppl_loss + self.weight_norm)*1e2
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 10
@@ -465,15 +465,15 @@ parser.add_argument('--layers_ctx', type=int, default=2)
 parser.add_argument('--layers_dec', type=int, default=2)
 parser.add_argument('--layers_ctx_2', type=int, default=1)
 parser.add_argument('--layers_dec_2', type=int, default=1)
-parser.add_argument('--size_enc', type=int, default=32)
+parser.add_argument('--size_enc', type=int, default=64)
 parser.add_argument('--size_attn', type=int, default=0)
-parser.add_argument('--size_ctx', type=int, default=32)
-parser.add_argument('--size_dec', type=int, default=64)
-parser.add_argument('--size_ctx_2', type=int, default=32)
-parser.add_argument('--size_dec_2', type=int, default=64)
-parser.add_argument('--size_usr', type=int, default=8)
-parser.add_argument('--size_wd', type=int, default=16)
-parser.add_argument('--weight_decay', type=float, default=1e-3)
+parser.add_argument('--size_ctx', type=int, default=128)
+parser.add_argument('--size_dec', type=int, default=128)
+parser.add_argument('--size_ctx_2', type=int, default=128)
+parser.add_argument('--size_dec_2', type=int, default=128)
+parser.add_argument('--size_usr', type=int, default=16)
+parser.add_argument('--size_wd', type=int, default=32)
+parser.add_argument('--weight_decay', type=float, default=1e-8)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-3)
@@ -481,7 +481,7 @@ parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=20)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=16)
 parser.add_argument('--max_turns_allowed', type=int, default=8)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=0)
@@ -677,7 +677,7 @@ while True:
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
         if sentence_lengths_padded.shape[1] < 2 and repeat == 0:
             continue
-        if wds > max_wds * .6 or wds < max_wds * .05 and repeat == 0:
+        if (wds > max_wds * .6 or wds < max_wds * .05) and repeat == 0:
             continue
         
         
