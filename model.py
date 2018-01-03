@@ -259,6 +259,7 @@ class Model():
         self.usr_emb_decode = tf.concat((self.usr_emb[:,1:,:], self.usr_emb[:,-2:-1,:]), 1)
         self.usr_emb_decode_flat = tf.reshape(self.usr_emb_decode, [-1, size_usr])
         self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
+        dec_input_init = tf.reduce_max(self.usr_emb, 1)
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
         self.mask_expanded_wds_usrs = tf.tile(tf.expand_dims(self.mask_expanded, -1), [1,1,1, self.size_wd+self.size_usr])
@@ -342,8 +343,8 @@ class Model():
         self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len-1])
         #self.target_flat = tf.reshape(self.target, [-1])
         
-        dec_input_init = tf.reshape(self.context_encs_final, 
-                [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
+        #dec_input_init = tf.reshape(self.context_encs_final, 
+        #        [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
         
         self.dec_init_states = [layers.dense(dec_input_init, size_dec) for _ in range(layers_dec)]
         
@@ -367,12 +368,12 @@ class Model():
                 head_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_dec], 
                 history_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_ctx_final],
                 head_expand_dims = [(2, self.max_conv_len)], 
-                history_expand_dims = [(1, self.max_conv_len),(4, self.max_sent_len)], 
+                history_expand_dims = [(1, self.max_conv_len),(3, self.max_sent_len)], 
                 history_rollup_dims = [(2, self.max_conv_len)],
                 name='dec_ctx_attn')
         self.dec_ctx_attn = self.dec_ctx_Attention.attended_history_rolledup
         self.decoder_with_attn = tf.concat((self.decoder_deep, self.dec_ctx_attn), -1)
-        self.size_dec_final = size_dec + size_ctx
+        self.size_dec_final = size_dec + self.size_ctx_final
         self.decoder_out_for_ppl = tf.reshape(self.decoder_with_attn[:,:-1,:,:],(-1, self.size_dec_final))
         self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
         self.dec_relu = lrelu(self.dec_raw)
@@ -480,8 +481,8 @@ parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=30)
-parser.add_argument('--max_turns_allowed', type=int, default=12)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=20)
+parser.add_argument('--max_turns_allowed', type=int, default=8)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=0)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -674,9 +675,9 @@ while True:
 
         wds = sentence_lengths_padded.sum()
         max_wds = args.max_turns_allowed * args.max_sentence_length_allowed
-        if sentence_lengths_padded.shape[1] < 2:
+        if sentence_lengths_padded.shape[1] < 2 and repeat == 0:
             continue
-        if wds > max_wds * .6 or wds < max_wds * .05:
+        if wds > max_wds * .6 or wds < max_wds * .05 and repeat == 0:
             continue
         
         
