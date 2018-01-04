@@ -114,14 +114,14 @@ class Attention():
         head_flat = tf.reshape(head_expanded, [-1, head_size])
         history_flat = tf.reshape(history_expanded, [-1, history_size])
         headtimesw = tf.matmul(head_flat, self.W)
-        self.attn_weights = tf.exp(tf.reduce_sum(headtimesw * history_flat, -1))
+        self.attn_weights = tf.exp(tf.reduce_sum(headtimesw * history_flat/100, -1))
         self.attn_weights_shaped = tf.reshape(tf.tile(tf.expand_dims(
                 self.attn_weights, -1), [1, history_size]), history_expanded_shape)
         #tile_dims = [1 for _  in history_expanded_shape]
         #tile_dims[history_rollup_dim] = history_expanded_shape[history_rollup_dim]
         self.attn_weights_reduced = self.attn_weights_shaped
         for dim, _ in history_rollup_dims[::-1]:
-            self.attn_weights_reduced = tf.reduce_sum(self.attn_weights_reduced, dim)
+            self.attn_weights_reduced = tf.reduce_sum(self.attn_weights_reduced/100, dim)
         
         self.attn_weights_normalization = self.attn_weights_reduced
         for dim, val in history_rollup_dims:
@@ -259,7 +259,8 @@ class Model():
         self.usr_emb_decode = tf.concat((self.usr_emb[:,1:,:], self.usr_emb[:,-2:-1,:]), 1)
         self.usr_emb_decode_flat = tf.reshape(self.usr_emb_decode, [-1, size_usr])
         self.usr_emb_expanded = tf.tile(tf.expand_dims(self.usr_emb, 2),[1,1,self.max_sent_len,1])
-        self.dec_input_init = tf.reshape(self.usr_emb, [-1, self.size_usr])
+        self.ctx_input_init = tf.reduce_mean(self.usr_emb, 1)
+        #self.dec_input_init = tf.reshape(self.usr_emb, [-1, self.size_usr])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
         self.mask_expanded_wds_usrs = tf.tile(tf.expand_dims(self.mask_expanded, -1), [1,1,1, self.size_wd+self.size_usr])
@@ -290,10 +291,10 @@ class Model():
         
         sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
         
-        sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
-        ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
+        #sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
+        #ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
         
-        self.ctx_init_states = [layers.dense(ctx_input_init, size_ctx) for _ in range(layers_ctx)]
+        self.ctx_init_states = [layers.dense(self.ctx_input_init, size_ctx) for _ in range(layers_ctx)]
         self.context_encs = encode_context(
                 x = sentence_encs, num_layers = layers_ctx, size = size_ctx,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns, initial_states = self.ctx_init_states)
@@ -324,7 +325,7 @@ class Model():
         self.ctx_wd_attn = self.context_wd_Attention.attended_history_rolledup
         self.context_encs_with_attn = tf.concat((self.context_encs, self.ctx_wd_attn), 2)
         
-        self.ctx_init_states_2 = [layers.dense(ctx_input_init, size_ctx_2) for _ in range(layers_ctx_2)]
+        self.ctx_init_states_2 = [layers.dense(self.ctx_input_init, size_ctx_2) for _ in range(layers_ctx_2)]
         self.context_encs_second_rnn = encode_context(
                 x = self.context_encs_with_attn, num_layers = layers_ctx_2, size = size_ctx_2,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2,
@@ -332,19 +333,19 @@ class Model():
         
         self.context_encs_final = tf.concat((self.context_encs_with_attn, self.context_encs_second_rnn), 2)
         self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2
-        dec_inputs = tf.concat(
+        self.dec_inputs_deep = tf.concat(
                 (tf.tile(tf.expand_dims(self.context_encs_final, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
         
-        self.dec_inputs = tf.reshape(dec_inputs, 
-                                     [-1, self.max_sent_len,
-                                      self.size_ctx + self.size_wd + self.size_usr + self.size_enc + self.size_ctx_2])
+        self.dec_inputs = tf.reshape(
+                self.dec_inputs_deep,
+                [-1, self.max_sent_len,self.size_ctx + self.size_wd + self.size_usr + self.size_enc + self.size_ctx_2])
         
         self.target = self.wd_ind[:,1:, 1:]
         self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len-1])
         #self.target_flat = tf.reshape(self.target, [-1])
         
-        #dec_input_init = tf.reshape(self.context_encs_final, 
-        #        [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
+        self.dec_input_init = tf.reshape(self.context_encs_final, 
+                [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
         
         self.dec_init_states = [layers.dense(self.dec_input_init, size_dec) for _ in range(layers_dec)]
         
@@ -397,7 +398,7 @@ class Model():
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
         self.weight_norm = tf.reduce_mean([tf.reduce_sum(tf.square(var)) for var in self.tfvars])*weight_decay
-        loss = (self.ppl_loss + self.weight_norm)*1e2
+        loss = (self.ppl_loss + self.weight_norm)
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 10
@@ -476,7 +477,7 @@ parser.add_argument('--size_wd', type=int, default=32)
 parser.add_argument('--weight_decay', type=float, default=1e-8)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -583,6 +584,7 @@ vcb = dataset.vocab
 usrs = dataset.users
 num_usrs = len(usrs)
 vcb_len = len(vcb)
+lr = args.lr
 num_words = vcb_len
 size_usr = args.size_usr
 size_wd = args.size_wd
@@ -686,7 +688,7 @@ while True:
         max_words = words_padded.shape[2]
         #batch, turns in a sample, words in a message
         feed_dict = {
-                model.learning_rate: 1e-3,
+                model.learning_rate: lr,
                 model.wd_ind: words_padded,
                 model.usr_ind: speaker_padded,
                 model.conv_lengths: turns,
@@ -719,7 +721,8 @@ while True:
         else:
             _, loss, grad_norm, weight_norm =  sess.run([model.optimizer,model.ppl_loss, model.grad_norm, model.weight_norm],
                     feed_dict=feed_dict)
-        
+        if np.isnan(grad_norm):
+            breakhere = 1
         
         
         if itr % 10 == 0:
