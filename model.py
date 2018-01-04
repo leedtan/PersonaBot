@@ -298,14 +298,14 @@ class Model():
                 x=self.sent_input, num_layers=layers_enc, size = size_enc, 
                 lengths=self.sentence_lengths_flat, cells = self.sent_rnns, initial_states = self.sent_init_states)
         
-        sentence_encs = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
+        self.sentence_encs_shaped = tf.reshape(self.sentence_encs, [self.batch_size, self.max_conv_len,self.size_enc])
         
         #sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
         #ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
         
         self.ctx_init_states = [layers.dense(self.ctx_input_init, size_ctx) for _ in range(layers_ctx)]
         self.context_encs = encode_context(
-                x = sentence_encs, num_layers = layers_ctx, size = size_ctx,
+                x = self.sentence_encs_shaped, num_layers = layers_ctx, size = size_ctx,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns, initial_states = self.ctx_init_states)
 
         self.last_layer_enc_attend = tf.reshape(
@@ -340,14 +340,24 @@ class Model():
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2,
                 initial_states = self.ctx_init_states_2, name = 'ctx_2_')
         
-        self.context_encs_final = tf.concat((self.context_encs_with_attn, self.context_encs_second_rnn), 2)
-        self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2
+        self.context_enc_rar = tf.concat((self.context_encs_with_attn, self.context_encs_second_rnn), 2)
+        self.ctx_for_rec = tf.reshape(self.context_enc_rar, [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
+        self.thought_rec = MLP(self.ctx_for_rec, [self.size_enc], self.size_enc, 'thought_rec')
+        self.thought_rec_reshaped = tf.reshape(self.thought_rec, [self.batch_size, self.max_conv_len, self.size_enc])
+        self.context_encs_final = tf.concat((self.context_enc_rar, self.thought_rec_reshaped), 2)
+        
+        self.thought_rec_loss = tf.reduce_sum(tf.square(
+            tf.stop_gradient(self.sentence_encs_shaped[:,1:,:]) - self.thought_rec_reshaped[:,:-1,:]) * \
+                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 1e-3
+        
+        
+        self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2 + self.size_enc
         self.dec_inputs_deep = tf.concat(
                 (tf.tile(tf.expand_dims(self.context_encs_final, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
         
         self.dec_inputs = tf.reshape(
                 self.dec_inputs_deep,
-                [-1, self.max_sent_len,self.size_ctx + self.size_wd + self.size_usr + self.size_enc + self.size_ctx_2])
+                [-1, self.max_sent_len,self.size_wd + self.size_usr + self.size_ctx_final])
         
         self.target = self.wd_ind[:,1:, 1:]
         self.target_decode = tf.reshape(self.target, [self.batch_size * (self.max_conv_len - 1), self.max_sent_len-1])
@@ -449,7 +459,7 @@ class Model():
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
         self.weight_norm = tf.reduce_mean([tf.reduce_sum(tf.square(var)) for var in self.tfvars])*weight_decay
-        loss = (self.ppl_loss + self.weight_norm + self.reconstruct_loss)
+        loss = (self.ppl_loss + self.weight_norm + self.reconstruct_loss + self.thought_rec_loss)
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 1
@@ -462,7 +472,7 @@ class Model():
     def decode_greedy(self, num_layers, max_length, start_token):
         # = tf.concat(
         #           (tf.tile(tf.expand_dims(self.context_encs, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
-        ctx_flat = tf.reshape(self.context_encs_final, [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
+        ctx_flat = tf.reshape(self.context_encs_final, [-1, self.size_ctx_final])
         words = []
         pre_argmax_values = []
         start_embedding = tf.expand_dims(tf.nn.embedding_lookup(self.wd_mat, tf.expand_dims(start_token, -1)), 0)
@@ -475,7 +485,7 @@ class Model():
         prev_state = self.dec_init_states
         prev_state_2 = self.dec_init_states_2
         prev_layer = tf.reshape(
-                prev_layer, [-1, self.size_ctx + self.size_wd + self.size_usr + self.size_enc + self.size_ctx_2])
+                prev_layer, [-1, self.size_wd + self.size_usr + self.size_ctx_final])
         for _ in range(max_length):
             for idx in range(num_layers):
                 prev_layer,prev_state[idx] =self.dec_rnns[idx](inputs = prev_layer, state = prev_state[idx])
@@ -783,8 +793,9 @@ while True:
                 feed_dict=feed_dict)
             
         else:
-            _, loss, grad_norm, l2_reg_loss, rec_loss =  sess.run(
-                    [model.optimizer,model.ppl_loss, model.grad_norm, model.weight_norm, model.reconstruct_loss],
+            _, loss, grad_norm, l2_reg_loss, wd_rec_loss, thought_loss =  sess.run(
+                    [model.optimizer,model.ppl_loss, model.grad_norm, model.weight_norm, model.reconstruct_loss,
+                     model.thought_rec_loss ],
                     feed_dict=feed_dict)
 
         if np.isnan(grad_norm):
@@ -799,7 +810,8 @@ while True:
                             tf.Summary.Value(tag='loss', simple_value=loss),
                             tf.Summary.Value(tag='grad_norm', simple_value=grad_norm),
                             tf.Summary.Value(tag='l2_reg_loss', simple_value=l2_reg_loss),
-                            tf.Summary.Value(tag='rec_loss', simple_value=rec_loss),
+                            tf.Summary.Value(tag='wd_rec_loss', simple_value=wd_rec_loss),
+                            tf.Summary.Value(tag='thought_loss', simple_value=thought_loss),
                             
                             ]
                         ),
