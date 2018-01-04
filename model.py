@@ -35,7 +35,12 @@ from adv import *
 #from test import test
 tf.reset_default_graph()
 
-
+def MLP(x, hiddens, output_size, name, reuse = False):
+    prev_layer = x
+    for idx, l in enumerate(hiddens):
+        prev_layer = lrelu(layers.dense(prev_layer, l, name=name+'_' +str(idx), reuse = reuse))
+    output = layers.dense(prev_layer, output_size, name = name + 'final', reuse = reuse)
+    return output
 
 def print_greedy_decode(words_padded, greedy_responses, greedy_values):
     words_padded_decode = words_padded[0,:,:]
@@ -349,7 +354,7 @@ class Model():
         #self.target_flat = tf.reshape(self.target, [-1])
         
         self.dec_input_init = tf.reshape(self.context_encs_final, 
-                [-1, self.size_ctx + self.size_enc + self.size_ctx_2])
+                [-1, self.size_ctx_final])
         
         self.dec_init_states = [layers.dense(self.dec_input_init, size_dec) for _ in range(layers_dec)]
         
@@ -398,7 +403,7 @@ class Model():
             self.reconstruct_loss = tf.reduce_sum(tf.square(
                     self.reconstruct_for_penalty - self.wd_emb_for_reconstruct) * 
                     tf.tile(tf.expand_dims(self.mask_decode,-1), [1, 1, 1, self.size_wd])) / tf.reduce_sum(
-                            self.mask_decode)
+                            self.mask_decode) * 1e-3
             self.reconstruct_shaped = tf.reshape(
                     self.reconstruct,
                     (self.batch_size*self.max_conv_len,self.max_sent_len,self.size_wd))
@@ -419,7 +424,10 @@ class Model():
         else:
             self.size_dec_final = size_dec + self.size_ctx_final
             self.decoder_out_for_ppl = tf.reshape(self.decoder_with_attn[:,:-1,:,:],(-1, self.size_dec_final))
-        self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
+        #self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
+        self.dec_raw = MLP(
+                self.decoder_out_for_ppl, hiddens = [self.size_dec, self.size_dec],
+                output_size = self.num_wds, name = 'output_layer')
         self.dec_relu = lrelu(self.dec_raw)
         self.dec_relu_shaped = tf.reshape(
                 self.dec_relu, [self.batch_size *  (self.max_conv_len-1), self.max_sent_len, self.num_wds])[:,:-1,:]        
@@ -441,7 +449,7 @@ class Model():
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
         self.weight_norm = tf.reduce_mean([tf.reduce_sum(tf.square(var)) for var in self.tfvars])*weight_decay
-        loss = (self.ppl_loss + self.weight_norm + self.reconstruct_loss * 1e-3)
+        loss = (self.ppl_loss + self.weight_norm + self.reconstruct_loss)
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 1
@@ -495,7 +503,10 @@ class Model():
             for idx in range(self.layers_dec_2):
                 prev_layer,prev_state_2[idx] =self.dec_rnns_2[idx](inputs = prev_layer, state = prev_state_2[idx])
             prev_layer = tf.concat((pre_second_rnn,prev_layer, reconstruct),-1)
-            prev_layer = layers.dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
+            #prev_layer = layers.dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
+            prev_layer= MLP(
+                prev_layer, hiddens = [self.size_dec, self.size_dec],
+                output_size = self.num_wds, name = 'output_layer', reuse=True)
             next_words = tf.argmax(prev_layer, -1)
             words.append(next_words)
             pre_argmax_values.append(prev_layer)
@@ -772,8 +783,10 @@ while True:
                 feed_dict=feed_dict)
             
         else:
-            _, loss, grad_norm, weight_norm =  sess.run([model.optimizer,model.ppl_loss, model.grad_norm, model.weight_norm],
+            _, loss, grad_norm, l2_reg_loss, rec_loss =  sess.run(
+                    [model.optimizer,model.ppl_loss, model.grad_norm, model.weight_norm, model.reconstruct_loss],
                     feed_dict=feed_dict)
+
         if np.isnan(grad_norm):
             breakhere = 1
         
@@ -785,7 +798,8 @@ while True:
                             tf.Summary.Value(tag='perplexity', simple_value=np.exp(np.min((8, tonumpy(loss))))),
                             tf.Summary.Value(tag='loss', simple_value=loss),
                             tf.Summary.Value(tag='grad_norm', simple_value=grad_norm),
-                            tf.Summary.Value(tag='weight_norm', simple_value=weight_norm),
+                            tf.Summary.Value(tag='l2_reg_loss', simple_value=l2_reg_loss),
+                            tf.Summary.Value(tag='rec_loss', simple_value=rec_loss),
                             
                             ]
                         ),
