@@ -381,6 +381,27 @@ class Model():
         self.dec_ctx_attn = self.dec_ctx_Attention.attended_history_rolledup
         self.decoder_with_attn = tf.concat((self.decoder_deep, self.dec_ctx_attn), -1)
         if 1:
+            self.decoder_for_attn = tf.reshape(
+                    self.decoder_with_attn, 
+                    (self.batch_size*self.max_conv_len*self.max_sent_len,
+                     self.size_dec + self.size_ctx_final))
+            self.reconstruct = layers.dense(
+                    lrelu(layers.dense(self.decoder_for_attn, self.size_wd, name='rec_layer')),
+                    self.size_wd, name='rec_layer2')
+            self.reconstruct_for_penalty = tf.reshape(
+                    self.reconstruct, 
+                    (self.batch_size,self.max_conv_len,self.max_sent_len,self.size_wd))[:,:-1,:-1,:]
+            self.wd_emb_for_reconstruct = tf.stop_gradient(
+                    tf.reshape(self.wd_emb,
+                    (self.batch_size,self.max_conv_len,self.max_sent_len,self.size_wd))[:,1:,1:,:]
+                    )
+            self.reconstruct_loss = tf.reduce_sum(tf.square(
+                    self.reconstruct_for_penalty - self.wd_emb_for_reconstruct) * 
+                    tf.tile(tf.expand_dims(self.mask_decode,-1), [1, 1, 1, self.size_wd])) / tf.reduce_sum(
+                            self.mask_decode)
+            self.reconstruct_shaped = tf.reshape(
+                    self.reconstruct,
+                    (self.batch_size*self.max_conv_len,self.max_sent_len,self.size_wd))
             self.decoder_with_attn_shaped = tf.reshape(
                     self.decoder_with_attn,
                     (self.batch_size*self.max_conv_len, self.max_sent_len, self.size_dec + self.size_ctx_final))
@@ -388,8 +409,9 @@ class Model():
                     x = self.decoder_with_attn_shaped, num_layers = layers_dec_2, size = size_dec_2,
                     lengths = self.sentence_lengths_flat, cells = self.dec_rnns_2,
                     initial_states = self.dec_init_states_2, name = 'dec_2_')
-            self.decoder_attn_and_second_rnn = tf.concat((self.decoder_with_attn_shaped, self.decoder_second_rnn), -1)
-            self.size_dec_final = size_dec + self.size_ctx_final + size_dec_2
+            self.decoder_attn_and_second_rnn = tf.concat(
+                    (self.decoder_with_attn_shaped, self.decoder_second_rnn, self.reconstruct_shaped), -1)
+            self.size_dec_final = size_dec + self.size_ctx_final + size_dec_2 + self.size_wd
             self.decoder_attn_and_second_rnn_reshaped = tf.reshape(
                     self.decoder_attn_and_second_rnn, 
                     (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec_final))
@@ -419,7 +441,7 @@ class Model():
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
         self.weight_norm = tf.reduce_mean([tf.reduce_sum(tf.square(var)) for var in self.tfvars])*weight_decay
-        loss = (self.ppl_loss + self.weight_norm)
+        loss = (self.ppl_loss + self.weight_norm + self.reconstruct_loss * 1e-3)
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 1
@@ -465,9 +487,14 @@ class Model():
             dec_ctx_attn = dec_ctx_Attention.attended_history_rolledup
             prev_layer = tf.concat((prev_layer,dec_ctx_attn),-1)
             pre_second_rnn = prev_layer
+            
+            reconstruct = layers.dense(
+                    lrelu(layers.dense(pre_second_rnn, self.size_wd, name='rec_layer', reuse=True)),
+                    self.size_wd, name='rec_layer2', reuse=True)
+            
             for idx in range(self.layers_dec_2):
                 prev_layer,prev_state_2[idx] =self.dec_rnns_2[idx](inputs = prev_layer, state = prev_state_2[idx])
-            prev_layer = tf.concat((pre_second_rnn,prev_layer),-1)
+            prev_layer = tf.concat((pre_second_rnn,prev_layer, reconstruct),-1)
             prev_layer = layers.dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
             next_words = tf.argmax(prev_layer, -1)
             words.append(next_words)
