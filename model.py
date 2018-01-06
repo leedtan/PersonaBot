@@ -537,7 +537,6 @@ class Model():
             prev_layer = tf.concat((ctx_flat, wds_usrs), -1)
         return words, pre_argmax_values
 
-
         
  
 parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
@@ -618,11 +617,6 @@ dataloader = round_robin_dataloader(dataloaders)
 
 try:
     os.mkdir(args.logdir)
-except:
-    pass
-
-try:
-    os.mkdir("plot")
 except:
     pass
 
@@ -745,7 +739,6 @@ while True:
         repeat = 1
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
-
         if first_sample:
             turns_first, sentence_lengths_padded_first, speaker_padded_first, \
                 addressee_padded_first, words_padded_first, words_reverse_padded_first = \
@@ -796,7 +789,6 @@ while True:
                      model.grad_norm_ppl, model.grad_norm_rec_wd, model.grad_norm_rec_thought, 
                      model.grad_norm_overuse,model.grad_norm_total],
                     feed_dict=feed_dict)
-
             train_writer.add_summary(
                     tf.Summary(
                         value=[
