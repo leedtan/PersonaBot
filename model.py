@@ -1,15 +1,11 @@
 
-from torch.nn import Parameter
 from functools import wraps
 from nltk.translate import bleu_score
 
 import time
-import torch as T
-import torch.nn as NN
-import torch.nn.functional as F
-import torch.nn.init as INIT
+
 import tensorflow as tf
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
 from tensorflow import nn
 import numpy.random as RNG
 from numpy import rate
@@ -352,7 +348,7 @@ class Model():
         
         self.thought_rec_loss = tf.reduce_sum(tf.square(
             tf.stop_gradient(self.sentence_encs_shaped[:,1:,:]) - self.thought_rec_reshaped[:,:-1,:]) * \
-                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 1e-3
+                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 1e-2
         
         
         self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2 + self.size_enc
@@ -417,7 +413,7 @@ class Model():
             self.reconstruct_loss = tf.reduce_sum(tf.square(
                     self.reconstruct_for_penalty - self.wd_emb_for_reconstruct) * 
                     tf.tile(tf.expand_dims(self.mask_decode,-1), [1, 1, 1, self.size_wd])) / tf.reduce_sum(
-                            self.mask_decode) * 1e-6
+                            self.mask_decode) * 1e-5
             self.reconstruct_shaped = tf.reshape(
                     self.reconstruct,
                     (self.batch_size*self.max_conv_len,self.max_sent_len,self.size_wd))
@@ -446,7 +442,7 @@ class Model():
         self.dec_avg = tf.reduce_sum(
                 self.dec_relu * tf.expand_dims(tf.reshape(
                         self.mask_expanded[:,1:,:], [-1]),-1), 0)/tf.reduce_sum(self.mask_decode)
-        self.overuse_penalty = tf.reduce_mean(tf.pow(self.dec_avg, 2))
+        self.overuse_penalty = tf.reduce_mean(tf.pow(self.dec_avg, 2))*1e0
         self.dec_relu_shaped = tf.reshape(
                 self.dec_relu, [self.batch_size *  (self.max_conv_len-1), self.max_sent_len, self.num_wds])[:,:-1,:]        
         #self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
@@ -462,10 +458,10 @@ class Model():
         self.ppl_loss = tf.reduce_sum(tf.reduce_sum(tf.pow(
                 self.ppl_loss_masked, 2.0), 1), 0)/tf.reduce_sum(self.mask_flat_decode)/10
         self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
-                max_length = 30, start_token = dataset.index_word(START))
+                max_length = args.max_sentence_length_allowed, start_token = dataset.index_word(START))
         
         self.greedy_pre_argmax_offset = tf.reduce_mean(tf.concat(self.greedy_pre_argmax, 0), 0)
-        self.greedy_overuse_penalty = tf.reduce_mean(tf.pow(self.greedy_pre_argmax_offset, 2))
+        self.greedy_overuse_penalty = tf.reduce_mean(tf.pow(self.greedy_pre_argmax_offset, 2))*1e0
         
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
@@ -473,20 +469,29 @@ class Model():
         loss = (self.ppl_loss + self.weight_norm + 
                 self.reconstruct_loss + self.thought_rec_loss + 
                 self.overuse_penalty + self.greedy_overuse_penalty * self.greedy_enabled)
-        gvs = optimizer.compute_gradients(self.ppl_loss)
-        self.grad_norm_ppl = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
-        gvs = optimizer.compute_gradients(self.reconstruct_loss)
-        self.grad_norm_rec_wd = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
-        gvs = optimizer.compute_gradients(self.thought_rec_loss)
-        self.grad_norm_rec_thought = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
-        gvs = optimizer.compute_gradients(self.overuse_penalty)
-        self.grad_norm_overuse = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
-        gvs = optimizer.compute_gradients(self.greedy_overuse_penalty * self.greedy_enabled)
-        self.grad_norm_overuse_greedy = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+        
+        self.loss_adv = (self.ppl_loss + self.weight_norm + 
+                self.reconstruct_loss + self.thought_rec_loss + 
+                self.overuse_penalty)
+        self.context_encs_final_adv = tf.gradients(self.loss_adv, self.context_encs_final)
+        self.dec_init_adv = tf.gradients(self.loss_adv, self.dec_init_states)
+        self.dec_init_2_adv = tf.gradients(self.loss_adv, self.dec_init_states_2)
+        
+        if 1:
+            gvs = optimizer.compute_gradients(self.ppl_loss)
+            self.grad_norm_ppl = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+            gvs = optimizer.compute_gradients(self.reconstruct_loss)
+            self.grad_norm_rec_wd = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+            gvs = optimizer.compute_gradients(self.thought_rec_loss)
+            self.grad_norm_rec_thought = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+            gvs = optimizer.compute_gradients(self.overuse_penalty)
+            self.grad_norm_overuse = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+            gvs = optimizer.compute_gradients(self.greedy_overuse_penalty * self.greedy_enabled)
+            self.grad_norm_overuse_greedy = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm_total = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 1
-        clip_single = .001
+        clip_single = .01
         capped_gvs = [(tf.clip_by_value(grad, -1*clip_single,clip_single), var)
                       for grad, var in gvs if grad is not None]
         capped_gvs = [(tf.clip_by_norm(grad, clip_norm), var) for grad, var in capped_gvs if grad is not None]
@@ -503,8 +508,10 @@ class Model():
         context_encs_final = self.context_encs_final[0,:,:]
         #prev_state = [tf.zeros(self.size_dec) for _ in range(num_layers)]
         #prev_state = [tf.zeros((self.batch_size*self.max_conv_len, self.size_dec)) for _ in range(num_layers)]
-        prev_state = self.dec_init_states
-        prev_state_2 = self.dec_init_states_2
+        #prev_state = self.dec_init_states
+        #prev_state_2 = self.dec_init_states_2
+        prev_state = [self.dec_init_states[idx] for idx in range(len(self.dec_init_states))]
+        prev_state_2 = [self.dec_init_states_2[idx] for idx in range(len(self.dec_init_states_2))]
         prev_layer = tf.reshape(
                 prev_layer, [-1, self.size_wd + self.size_usr + self.size_ctx_final])
         for _ in range(max_length):
@@ -557,16 +564,16 @@ parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the d
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
 parser.add_argument('--layers_enc', type=int, default=3)
-parser.add_argument('--layers_ctx', type=int, default=2)
+parser.add_argument('--layers_ctx', type=int, default=3)
 parser.add_argument('--layers_dec', type=int, default=2)
-parser.add_argument('--layers_ctx_2', type=int, default=1)
-parser.add_argument('--layers_dec_2', type=int, default=1)
+parser.add_argument('--layers_ctx_2', type=int, default=2)
+parser.add_argument('--layers_dec_2', type=int, default=2)
 parser.add_argument('--size_enc', type=int, default=128)
 parser.add_argument('--size_attn', type=int, default=0)
 parser.add_argument('--size_ctx', type=int, default=256)
-parser.add_argument('--size_dec', type=int, default=512)
+parser.add_argument('--size_dec', type=int, default=256)
 parser.add_argument('--size_ctx_2', type=int, default=256)
-parser.add_argument('--size_dec_2', type=int, default=512)
+parser.add_argument('--size_dec_2', type=int, default=256)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=64)
 parser.add_argument('--weight_decay', type=float, default=1e-7)
@@ -628,7 +635,7 @@ try:
     os.mkdir(args.logdir)
 except:
     pass
-
+latest_loaditer = 0
 if len(args.modelname) > 0:
     modelnamesave = args.modelname
     modelnameload = None
@@ -705,7 +712,8 @@ model = Model(layers_enc=layers_enc,
               size_dec=size_dec,size_dec_2=size_dec_2,
               num_wds = num_words+1,num_usrs = num_usrs+1, weight_decay = weight_decay)
 
-
+def identity(x):
+    return x
 start = dataset.index_word(START)
 eos = dataset.index_word(EOS)
 unk = dataset.index_word(UNKNOWN)
@@ -745,7 +753,7 @@ while True:
             adv_style = 1 - adv_style
             #adjust_learning_rate(opt, args.lr / np.sqrt(1 + itr / 10000))
         itr += 1
-        repeat = 1
+        repeat = 0
         turns, sentence_lengths_padded, speaker_padded, \
             addressee_padded, words_padded, words_reverse_padded = item
         if first_sample:
@@ -777,31 +785,64 @@ while True:
         max_turns = words_padded.shape[1]
         max_words = words_padded.shape[2]
         #batch, turns in a sample, words in a message
+        
         feed_dict = {
-                model.learning_rate: lr,
-                model.wd_ind: words_padded,
-                model.usr_ind: speaker_padded,
-                model.conv_lengths: turns,
-                model.sentence_lengths: sentence_lengths_padded,
-                model.batch_size: batch_size,
-                model.max_sent_len: max_words,
-                model.max_conv_len: max_turns,
-                model.greedy_enabled: 0.
-                }
+            model.learning_rate: lr,
+            model.wd_ind: words_padded,
+            model.usr_ind: speaker_padded,
+            model.conv_lengths: turns,
+            model.sentence_lengths: sentence_lengths_padded,
+            model.batch_size: batch_size,
+            model.max_sent_len: max_words,
+            model.max_conv_len: max_turns,
+            }
         
         
-        if itr % 10 == 0:
-            feed_dict = {
-                model.learning_rate: lr,
-                model.wd_ind: words_padded,
-                model.usr_ind: speaker_padded,
-                model.conv_lengths: turns,
-                model.sentence_lengths: sentence_lengths_padded,
-                model.batch_size: batch_size,
-                model.max_sent_len: max_words,
-                model.max_conv_len: max_turns,
-                model.greedy_enabled: 1.,
-                }
+        if itr % 5 == 0:
+            if itr % 2 == 0: 
+                act = np.sign
+            else:
+                act = identity
+            if 1:
+                feed_dict = {
+                        model.learning_rate: lr,
+                        model.wd_ind: words_padded,
+                        model.usr_ind: speaker_padded,
+                        model.conv_lengths: turns,
+                        model.sentence_lengths: sentence_lengths_padded,
+                        model.batch_size: batch_size,
+                        model.max_sent_len: max_words,
+                        model.max_conv_len: max_turns,
+                        model.greedy_enabled: 0.
+                        }
+                #Adv sample ctx outputs:
+                adv_tensors = [model.context_encs_final, model.dec_init_states, model.dec_init_states_2,
+                           model.context_encs_final_adv, model.dec_init_adv, model.dec_init_2_adv]
+            _, loss_adv_pre, act1, act2, act3, grad1, grad2, grad3 = sess.run(
+                    [model.optimizer, model.loss_adv] + adv_tensors,feed_dict=feed_dict)
+            feed_dict[adv_tensors[0]] = \
+                act1 +  act(grad1[0])*1e-2 * np.std(act1)/np.mean(np.square(act(grad1[idx])))
+            for idx in range(len(act1)):
+                feed_dict[adv_tensors[1][idx]] = \
+                    act2[idx] +  act(grad2[idx])*1e-2 * np.std(act2[idx])/np.mean(np.square(act(grad2[idx])))
+                feed_dict[adv_tensors[2][idx]] = \
+                    act3[idx] +  act(grad3[idx])*1e-2 * np.std(act3[idx])/np.mean(np.square(act(grad3[idx])))
+            _, loss_adv_post = sess.run([model.optimizer, model.loss_adv], feed_dict)
+            loss_adv_diff = loss_adv_post - loss_adv_pre
+            if itr % 5 == 0:
+                train_writer.add_summary(
+                        tf.Summary(
+                            value=[
+                                tf.Summary.Value(tag='loss_adv_diff', simple_value=loss_adv_diff),
+                                tf.Summary.Value(tag='loss_adv_pre', simple_value=loss_adv_pre),
+                                tf.Summary.Value(tag='loss_adv_post', simple_value=loss_adv_post),
+                                ]
+                            ),
+                        itr
+                        )
+        
+        elif itr % 3 == 0:
+            feed_dict[model.greedy_enabled] = 1.
             _, loss, weight_norm, rec_loss_wd, rec_loss_thought, overuse_penalty, \
                 grad_norm_ppl, grad_norm_rec_wd, grad_norm_rec_thought, grad_norm_overuse, grad_norm_total, \
                 grad_norm_overuse_greedy, greedy_overuse_penalty =  sess.run(
@@ -832,7 +873,7 @@ while True:
                     itr
                     )
         else:
-            sess.run(model.optimizer,feed_dict=feed_dict)
+            sess.run(model.optimizer, feed_dict)
             
         #if np.isnan(grad_norm):
         #    breakhere = 1
