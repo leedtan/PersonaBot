@@ -247,6 +247,8 @@ class Model():
         self.batch_size = tf.placeholder(tf.int32, shape=(None))
         self.max_sent_len = tf.placeholder(tf.int32, shape=(None))
         self.max_conv_len = tf.placeholder(tf.int32, shape=(None))
+        
+        self.greedy_enabled = tf.placeholder_with_default(0., shape=(None))
         self.conv_lengths_flat = tf.reshape(self.conv_lengths, [-1])
         self.sentence_lengths_flat = tf.reshape(self.sentence_lengths, [-1])
         
@@ -462,10 +464,15 @@ class Model():
         self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
                 max_length = 30, start_token = dataset.index_word(START))
         
+        self.greedy_pre_argmax_offset = tf.reduce_mean(tf.concat(self.greedy_pre_argmax, 0), 0)
+        self.greedy_overuse_penalty = tf.reduce_mean(tf.pow(self.greedy_pre_argmax_offset, 2))
+        
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
         self.weight_norm = tf.reduce_mean([tf.reduce_sum(tf.square(var)) for var in self.tfvars])*weight_decay
-        loss = (self.ppl_loss + self.weight_norm + self.reconstruct_loss + self.thought_rec_loss + self.overuse_penalty)
+        loss = (self.ppl_loss + self.weight_norm + 
+                self.reconstruct_loss + self.thought_rec_loss + 
+                self.overuse_penalty + self.greedy_overuse_penalty * self.greedy_enabled)
         gvs = optimizer.compute_gradients(self.ppl_loss)
         self.grad_norm_ppl = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         gvs = optimizer.compute_gradients(self.reconstruct_loss)
@@ -474,6 +481,8 @@ class Model():
         self.grad_norm_rec_thought = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         gvs = optimizer.compute_gradients(self.overuse_penalty)
         self.grad_norm_overuse = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+        gvs = optimizer.compute_gradients(self.greedy_overuse_penalty * self.greedy_enabled)
+        self.grad_norm_overuse_greedy = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         gvs = optimizer.compute_gradients(loss)
         self.grad_norm_total = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = 1
@@ -563,7 +572,7 @@ parser.add_argument('--size_wd', type=int, default=64)
 parser.add_argument('--weight_decay', type=float, default=1e-7)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--lr', type=float, default=1e-5)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -776,18 +785,31 @@ while True:
                 model.sentence_lengths: sentence_lengths_padded,
                 model.batch_size: batch_size,
                 model.max_sent_len: max_words,
-                model.max_conv_len: max_turns
+                model.max_conv_len: max_turns,
+                model.greedy_enabled: 0.
                 }
         
         
-        
         if itr % 10 == 0:
+            feed_dict = {
+                model.learning_rate: lr,
+                model.wd_ind: words_padded,
+                model.usr_ind: speaker_padded,
+                model.conv_lengths: turns,
+                model.sentence_lengths: sentence_lengths_padded,
+                model.batch_size: batch_size,
+                model.max_sent_len: max_words,
+                model.max_conv_len: max_turns,
+                model.greedy_enabled: 1.,
+                }
             _, loss, weight_norm, rec_loss_wd, rec_loss_thought, overuse_penalty, \
-                grad_norm_ppl, grad_norm_rec_wd, grad_norm_rec_thought, grad_norm_overuse, grad_norm_total =  sess.run(
+                grad_norm_ppl, grad_norm_rec_wd, grad_norm_rec_thought, grad_norm_overuse, grad_norm_total, \
+                grad_norm_overuse_greedy, greedy_overuse_penalty =  sess.run(
                     [model.optimizer,model.ppl_loss, model.weight_norm, model.reconstruct_loss, model.thought_rec_loss,
                      model.overuse_penalty,
                      model.grad_norm_ppl, model.grad_norm_rec_wd, model.grad_norm_rec_thought, 
-                     model.grad_norm_overuse,model.grad_norm_total],
+                     model.grad_norm_overuse,model.grad_norm_total,
+                     model.grad_norm_overuse_greedy, model.greedy_overuse_penalty],
                     feed_dict=feed_dict)
             train_writer.add_summary(
                     tf.Summary(
@@ -798,10 +820,12 @@ while True:
                             tf.Summary.Value(tag='rec_loss_wd', simple_value=rec_loss_wd),
                             tf.Summary.Value(tag='rec_loss_thought', simple_value=rec_loss_thought),
                             tf.Summary.Value(tag='overuse_penalty', simple_value=overuse_penalty),
+                            tf.Summary.Value(tag='greedy_overuse_penalty', simple_value=greedy_overuse_penalty),
                             tf.Summary.Value(tag='grad_norm_ppl', simple_value=grad_norm_ppl),
                             tf.Summary.Value(tag='grad_norm_rec_wd', simple_value=grad_norm_rec_wd),
                             tf.Summary.Value(tag='grad_norm_rec_thought', simple_value=grad_norm_rec_thought),
                             tf.Summary.Value(tag='grad_norm_overuse', simple_value=grad_norm_overuse),
+                            tf.Summary.Value(tag='grad_norm_overuse_greedy', simple_value=grad_norm_overuse_greedy),
                             tf.Summary.Value(tag='grad_norm_total', simple_value=grad_norm_total),
                             ]
                         ),
@@ -810,8 +834,8 @@ while True:
         else:
             sess.run(model.optimizer,feed_dict=feed_dict)
             
-        if np.isnan(grad_norm):
-            breakhere = 1
+        #if np.isnan(grad_norm):
+        #    breakhere = 1
         if itr % 100 == 0:
             a = 2
         if itr % 100 == 0:
