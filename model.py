@@ -484,8 +484,6 @@ class Model():
         self.optimizer = optimizer.apply_gradients(capped_gvs)
         
     def decode_greedy(self, num_layers, max_length, start_token):
-        # = tf.concat(
-        #           (tf.tile(tf.expand_dims(self.context_encs, 2),[1,1,self.max_sent_len,1]), self.wds_usrs), 3)
         ctx_flat = tf.reshape(self.context_encs_final, [-1, self.size_ctx_final])
         words = []
         pre_argmax_values = []
