@@ -255,7 +255,8 @@ class Model():
         self.mask = tf.cast(tf.sequence_mask(self.sentence_lengths_flat), tf.float32)
         self.mask_expanded = tf.reshape(self.mask, [self.batch_size, self.max_conv_len, self.max_sent_len])
         self.mask_decode = self.mask_expanded[:,1:,1:]
-        self.mask_flat_decode = tf.reshape(self.mask_decode, [self.batch_size * (self.max_conv_len-1), self.max_sent_len-1])
+        self.mask_flat_decode = tf.reshape(
+                self.mask_decode, [self.batch_size * (self.max_conv_len-1), self.max_sent_len-1])
         
         self.wd_mat = tf.Variable(1e-3*tf.random_normal([num_wds, size_wd]))
         self.usr_mat = tf.Variable(1e-3*tf.random_normal([num_usrs, size_usr]))
@@ -270,7 +271,8 @@ class Model():
         #self.dec_input_init = tf.reshape(self.usr_emb, [-1, self.size_usr])
         
         self.wds_usrs = tf.concat((self.wd_emb, self.usr_emb_expanded), 3)
-        self.mask_expanded_wds_usrs = tf.tile(tf.expand_dims(self.mask_expanded, -1), [1,1,1, self.size_wd+self.size_usr])
+        self.mask_expanded_wds_usrs = tf.tile(
+                tf.expand_dims(self.mask_expanded, -1), [1,1,1, self.size_wd+self.size_usr])
         self.wds_usrs = self.wds_usrs * self.mask_expanded_wds_usrs
         self.sent_rnns = [[GRUCell(size_enc//2, kernel_initializer=tf.contrib.layers.xavier_initializer()),
                            GRUCell(size_enc//2, kernel_initializer=tf.contrib.layers.xavier_initializer())]
@@ -319,14 +321,17 @@ class Model():
         self.context_masked = tf.tile(tf.expand_dims(tf.reduce_max(
                 self.mask_expanded, -1), -1), [1, 1, self.size_ctx]) * self.context_encs
         self.last_layer_enc_attend_masked = tf.tile(
-                tf.expand_dims(self.mask_expanded, -1), [1, 1, 1,self.size_enc]) * self.last_layer_enc_attend
+                tf.expand_dims(self.mask_expanded, -1), 
+                [1, 1, 1,self.size_enc]) * self.last_layer_enc_attend
         self.context_wd_Attention= Attention(
                 head=self.context_masked, 
                 history=self.last_layer_enc_attend_masked, 
                 head_shape = [self.batch_size, self.max_conv_len, self.size_ctx],
                 history_shape = [self.batch_size, self.max_conv_len, self.max_sent_len, self.size_enc],
-                head_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_ctx], 
-                history_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_enc],
+                head_expanded_shape = [
+                        self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_ctx], 
+                history_expanded_shape = [
+                        self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_enc],
                 head_expand_dims = [(2, self.max_conv_len), (3, self.max_sent_len)], 
                 history_expand_dims = [(1, self.max_conv_len)], 
                 history_rollup_dims = [(2, self.max_conv_len),(3, self.max_sent_len)],
@@ -387,8 +392,12 @@ class Model():
                 history=self.context_encs_final, 
                 head_shape = [self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec],
                 history_shape = [self.batch_size, self.max_conv_len, self.size_ctx_final],
-                head_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_dec], 
-                history_expanded_shape = [self.batch_size, self.max_conv_len, self.max_conv_len, self.max_sent_len, self.size_ctx_final],
+                head_expanded_shape = [
+                        self.batch_size, self.max_conv_len, 
+                        self.max_conv_len, self.max_sent_len, self.size_dec], 
+                history_expanded_shape = [
+                        self.batch_size, self.max_conv_len, 
+                        self.max_conv_len, self.max_sent_len, self.size_ctx_final],
                 head_expand_dims = [(2, self.max_conv_len)], 
                 history_expand_dims = [(1, self.max_conv_len),(3, self.max_sent_len)], 
                 history_rollup_dims = [(2, self.max_conv_len)],
@@ -430,7 +439,8 @@ class Model():
             self.decoder_attn_and_second_rnn_reshaped = tf.reshape(
                     self.decoder_attn_and_second_rnn, 
                     (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec_final))
-            self.decoder_out_for_ppl = tf.reshape(self.decoder_attn_and_second_rnn_reshaped[:,:-1,:,:],(-1, self.size_dec_final))
+            self.decoder_out_for_ppl = tf.reshape(
+                    self.decoder_attn_and_second_rnn_reshaped[:,:-1,:,:],(-1, self.size_dec_final))
         else:
             self.size_dec_final = size_dec + self.size_ctx_final
             self.decoder_out_for_ppl = tf.reshape(self.decoder_with_attn[:,:-1,:,:],(-1, self.size_dec_final))
@@ -559,7 +569,7 @@ parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='OpenSubtitles-dialogs-small', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='opensub', help='Root of meta data')
 #796
-parser.add_argument('--vocabsize', type=int, default=39996, help='Vocabulary size')
+parser.add_argument('--vocabsize', type=int, default=3996, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -568,14 +578,14 @@ parser.add_argument('--layers_ctx', type=int, default=3)
 parser.add_argument('--layers_dec', type=int, default=2)
 parser.add_argument('--layers_ctx_2', type=int, default=2)
 parser.add_argument('--layers_dec_2', type=int, default=2)
-parser.add_argument('--size_enc', type=int, default=128)
+parser.add_argument('--size_enc', type=int, default=18)
 parser.add_argument('--size_attn', type=int, default=0)
-parser.add_argument('--size_ctx', type=int, default=256)
-parser.add_argument('--size_dec', type=int, default=256)
-parser.add_argument('--size_ctx_2', type=int, default=256)
-parser.add_argument('--size_dec_2', type=int, default=256)
+parser.add_argument('--size_ctx', type=int, default=26)
+parser.add_argument('--size_dec', type=int, default=26)
+parser.add_argument('--size_ctx_2', type=int, default=26)
+parser.add_argument('--size_dec_2', type=int, default=26)
 parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=64)
+parser.add_argument('--size_wd', type=int, default=6)
 parser.add_argument('--weight_decay', type=float, default=1e-7)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
@@ -584,7 +594,7 @@ parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
-parser.add_argument('--max_sentence_length_allowed', type=int, default=16)
+parser.add_argument('--max_sentence_length_allowed', type=int, default=8)
 parser.add_argument('--max_turns_allowed', type=int, default=8)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=0)
@@ -874,7 +884,17 @@ while True:
                     )
         else:
             sess.run(model.optimizer, feed_dict)
-            
+            def test_grads(val, mask, loss = model.ppl_loss):
+                return tf.reduce_sum([
+                    tf.reduce_sum(tf.square(gv)) for gv in 
+                    tf.gradients(loss, val * 
+                                 (1-mask)) if gv is not None])
+            sess.run(test_grads(
+                    model.decoder_out_for_ppl, model.mask_decode), feed_dict)
+            sess.run(tf.reduce_sum([
+                tf.reduce_sum(tf.square(gv)) for gv in 
+                tf.gradients(model.ppl_loss, model.decoder_out_for_ppl * 
+                             (1-model.mask_decode)) if gv is not None]), feed_dict)
         #if np.isnan(grad_norm):
         #    breakhere = 1
         if itr % 100 == 0:
