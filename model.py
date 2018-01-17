@@ -479,7 +479,7 @@ class Model():
                 name=None
             ), tf.float32)
             
-            self.dec_exp = tf.exp(self.dec_relu_shaped)
+            self.dec_exp = tf.exp(self.dec_relu_shaped/1000)
             self.ppl_loss_raw = self.dec_exp / tf.expand_dims(tf.reduce_sum(self.dec_exp, 2), -1)
             if 1:
                 self.ppl_loss_masked = self.l2_loss = ((
@@ -487,7 +487,7 @@ class Model():
                         (self.ppl_loss_raw * (1-self.target_decode_l2))/self.num_wds
                         )* tf.expand_dims(self.mask_flat_decode, -1)*1e-2
                 self.ppl_loss = tf.reduce_sum(tf.pow(
-                        self.ppl_loss_masked),1.0)/tf.reduce_sum(
+                        self.ppl_loss_masked, 1.0))/tf.reduce_sum(
                     self.mask_flat_decode)*1e5
             else:
                 self.ppl_loss_masked = self.l2_loss = ((
