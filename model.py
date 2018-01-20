@@ -31,11 +31,16 @@ from adv import *
 #from test import test
 tf.reset_default_graph()
 
+def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.):
+    return layers.dense(prev_layer, layer_size, name = name, reuse = reuse) * scale
+
 def MLP(x, hiddens, output_size, name, reuse = False):
     prev_layer = x
     for idx, l in enumerate(hiddens):
-        prev_layer = lrelu(layers.dense(prev_layer, l, name=name+'_' +str(idx), reuse = reuse))
-    output = layers.dense(prev_layer, output_size, name = name + 'final', reuse = reuse)
+        prev_layer = lrelu(scaled_dense(
+                prev_layer, l, name=name+'_' +str(idx), reuse = reuse))#/prev_layer.get_shape().as_list()[-1]
+    output = scaled_dense(
+            prev_layer, output_size, name = name + 'final', reuse = reuse)#/prev_layer.get_shape().as_list()[-1]
     return output
 
 def print_greedy_decode(words_padded, greedy_responses, greedy_values):
@@ -117,14 +122,14 @@ class Attention():
         headtimesw = tf.matmul(head_flat, self.W)
         headwhistory = headtimesw * history_flat
         headwhistorysqrt = tf.sqrt(tf.abs(headwhistory)) * tf.sign(headwhistory)
-        self.attn_weights = tf.exp(tf.tanh(tf.reduce_sum(headwhistory/1000, -1))*10-5)
+        self.attn_weights = tf.exp(tf.tanh(tf.reduce_sum(headwhistory/100, -1))*4)
         self.attn_weights_shaped = tf.reshape(tf.tile(tf.expand_dims(
                 self.attn_weights, -1), [1, history_size]), history_expanded_shape)
         #tile_dims = [1 for _  in history_expanded_shape]
         #tile_dims[history_rollup_dim] = history_expanded_shape[history_rollup_dim]
         self.attn_weights_reduced = self.attn_weights_shaped
         for dim, _ in history_rollup_dims[::-1]:
-            self.attn_weights_reduced = tf.reduce_sum(self.attn_weights_reduced/100, dim)
+            self.attn_weights_reduced = tf.reduce_sum(self.attn_weights_reduced, dim)
         
         self.attn_weights_normalization = self.attn_weights_reduced
         for dim, val in history_rollup_dims:
@@ -258,7 +263,7 @@ class Model():
         self.mask_flat_decode = tf.reshape(
                 self.mask_decode, [self.batch_size * (self.max_conv_len-1), self.max_sent_len-1])
         
-        self.wd_mat = tf.Variable(1e-3*tf.random_normal([num_wds, size_wd]))
+        self.wd_mat = tf.Variable(1e0*tf.random_normal([num_wds, size_wd]))
         self.usr_mat = tf.Variable(1e-3*tf.random_normal([num_usrs, size_usr]))
         
         self.wd_emb = tf.nn.embedding_lookup(self.wd_mat, self.wd_ind)
@@ -294,7 +299,7 @@ class Model():
         self.sent_input_init = tf.reduce_sum(self.sent_input, 1)/self.sent_mask_contributions
         
         self.sent_init_states = [
-                (layers.dense(self.sent_input_init, size_enc//2), layers.dense(self.sent_input_init, size_enc//2))
+                (scaled_dense(self.sent_input_init, size_enc//2), scaled_dense(self.sent_input_init, size_enc//2))
                 for _ in range(layers_enc)]
         self.sentence_encs, self.last_layer_enc = encode_sentence(
                 x=self.sent_input, num_layers=layers_enc, size = size_enc, 
@@ -305,7 +310,7 @@ class Model():
         #sent_enc_mask = tf.tile(tf.expand_dims(self.mask_ctx_expanded, -1), [1, 1, self.size_enc])
         #ctx_input_init = tf.reduce_sum(sentence_encs * sent_enc_mask, 1) / tf.reduce_sum(sent_enc_mask, 1)
         
-        self.ctx_init_states = [layers.dense(self.ctx_input_init, size_ctx) for _ in range(layers_ctx)]
+        self.ctx_init_states = [scaled_dense(self.ctx_input_init, size_ctx) for _ in range(layers_ctx)]
         self.context_encs = encode_context(
                 x = self.sentence_encs_shaped, num_layers = layers_ctx, size = size_ctx,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns, initial_states = self.ctx_init_states)
@@ -339,7 +344,7 @@ class Model():
         self.ctx_wd_attn = self.context_wd_Attention.attended_history_rolledup
         self.context_encs_with_attn = tf.concat((self.context_encs, self.ctx_wd_attn), 2)
         
-        self.ctx_init_states_2 = [layers.dense(self.ctx_input_init, size_ctx_2) for _ in range(layers_ctx_2)]
+        self.ctx_init_states_2 = [scaled_dense(self.ctx_input_init, size_ctx_2) for _ in range(layers_ctx_2)]
         self.context_encs_second_rnn = encode_context(
                 x = self.context_encs_with_attn, num_layers = layers_ctx_2, size = size_ctx_2,
                 lengths = self.conv_lengths_flat, cells = self.ctx_rnns_2,
@@ -371,9 +376,9 @@ class Model():
         self.dec_input_init = tf.reshape(self.context_encs_final, 
                 [-1, self.size_ctx_final])
         
-        self.dec_init_states = [layers.dense(self.dec_input_init, size_dec) for _ in range(layers_dec)]
+        self.dec_init_states = [scaled_dense(self.dec_input_init, size_dec) for _ in range(layers_dec)]
         
-        self.dec_init_states_2 = [layers.dense(self.dec_input_init, size_dec_2) for _ in range(layers_dec_2)]
+        self.dec_init_states_2 = [scaled_dense(self.dec_input_init, size_dec_2) for _ in range(layers_dec_2)]
         
         self.decoder_out = decode(
                 x = self.dec_inputs, num_layers=layers_dec, size=size_dec,
@@ -409,8 +414,8 @@ class Model():
                     self.decoder_with_attn, 
                     (self.batch_size*self.max_conv_len*self.max_sent_len,
                      self.size_dec + self.size_ctx_final))
-            self.reconstruct = layers.dense(
-                    lrelu(layers.dense(self.decoder_for_attn, self.size_wd, name='rec_layer')),
+            self.reconstruct = scaled_dense(
+                    lrelu(scaled_dense(self.decoder_for_attn, self.size_wd, name='rec_layer')),
                     self.size_wd, name='rec_layer2')
             self.reconstruct_for_penalty = tf.reshape(
                     self.reconstruct, 
@@ -444,11 +449,22 @@ class Model():
         else:
             self.size_dec_final = size_dec + self.size_ctx_final
             self.decoder_out_for_ppl = tf.reshape(self.decoder_with_attn[:,:-1,:,:],(-1, self.size_dec_final))
-        #self.dec_raw = layers.dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
+        #self.dec_raw = scaled_dense(self.decoder_out_for_ppl, self.num_wds, name='output_layer')
         self.dec_raw = MLP(
                 self.decoder_out_for_ppl, hiddens = [self.size_dec, self.size_dec],
                 output_size = self.num_wds, name = 'output_layer')
         self.dec_relu = lrelu(self.dec_raw)
+        
+        #DBG SECTION
+        if 0:
+            self.DEC_1 = tf.reshape(
+                    self.decoder_out, 
+                    (self.batch_size, self.max_conv_len, self.max_sent_len, self.size_dec))[:,:-1,:,:]
+            self.DEC_2 = tf.reshape(self.DEC_1, [-1, self.size_dec])
+            self.DEC_3 = scaled_dense(self.DEC_2, self.num_wds, name='finaloutputdbg')
+            self.dec_relu = lrelu(self.DEC_3)
+        #END DBG
+        
         self.dec_avg = tf.reduce_sum(
                 self.dec_relu * tf.expand_dims(tf.reshape(
                         self.mask_expanded[:,1:,:], [-1]),-1), 0)/tf.reduce_sum(self.mask_decode)
@@ -467,7 +483,7 @@ class Model():
                 name=None
             )
             self.ppl_loss = tf.reduce_sum(tf.reduce_sum(tf.pow(
-                    self.ppl_loss_masked, 1.0), 1), 0)/tf.reduce_sum(self.mask_flat_decode)*1e-2
+                    self.ppl_loss_masked, 1.6), 1), 0)/tf.reduce_sum(self.mask_flat_decode)
         else:
             self.target_decode_l2 = tf.cast(tf.one_hot(
                 indices = self.target_decode,
@@ -510,7 +526,8 @@ class Model():
         self.loss = (self.ppl_loss + self.weight_norm + 
                 self.reconstruct_loss + self.thought_rec_loss + 
                 self.overuse_penalty + self.greedy_overuse_penalty * self.greedy_enabled)
-        
+        if 0: #DBG
+            self.loss = self.ppl_loss
         self.loss_adv = (self.ppl_loss + self.weight_norm + 
                 self.reconstruct_loss + self.thought_rec_loss + 
                 self.overuse_penalty)
@@ -537,7 +554,7 @@ class Model():
                       for grad, var in gvs if grad is not None]
         capped_gvs = [(tf.clip_by_norm(grad, clip_norm), var) for grad, var in capped_gvs if grad is not None]
         self.optimizer = optimizer.apply_gradients(capped_gvs)
-        
+            
     def decode_greedy(self, num_layers, max_length, start_token):
         ctx_flat = tf.reshape(self.context_encs_final, [-1, self.size_ctx_final])
         words = []
@@ -575,14 +592,14 @@ class Model():
             prev_layer = tf.concat((prev_layer,dec_ctx_attn),-1)
             pre_second_rnn = prev_layer
             
-            reconstruct = layers.dense(
-                    lrelu(layers.dense(pre_second_rnn, self.size_wd, name='rec_layer', reuse=True)),
+            reconstruct = scaled_dense(
+                    lrelu(scaled_dense(pre_second_rnn, self.size_wd, name='rec_layer', reuse=True)),
                     self.size_wd, name='rec_layer2', reuse=True)
             
             for idx in range(self.layers_dec_2):
                 prev_layer,prev_state_2[idx] =self.dec_rnns_2[idx](inputs = prev_layer, state = prev_state_2[idx])
             prev_layer = tf.concat((pre_second_rnn,prev_layer, reconstruct),-1)
-            #prev_layer = layers.dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
+            #prev_layer = scaled_dense(prev_layer, self.num_wds, name='output_layer', reuse=True)
             prev_layer= MLP(
                 prev_layer, hiddens = [self.size_dec, self.size_dec],
                 output_size = self.num_wds, name = 'output_layer', reuse=True)
@@ -600,7 +617,7 @@ parser = argparse.ArgumentParser(description='Ubuntu Dialogue dataset parser')
 parser.add_argument('--dataroot', type=str,default='OpenSubtitles-dialogs-small', help='Root of the data downloaded from github')
 parser.add_argument('--metaroot', type=str, default='opensub', help='Root of meta data')
 #796
-parser.add_argument('--vocabsize', type=int, default=20, help='Vocabulary size')
+parser.add_argument('--vocabsize', type=int, default=396, help='Vocabulary size')
 parser.add_argument('--gloveroot', type=str,default='glove', help='Root of the data downloaded from github')
 parser.add_argument('--outputdir', type=str, default ='outputs',help='output directory')
 parser.add_argument('--logdir', type=str, default='logs', help='log directory')
@@ -620,7 +637,7 @@ parser.add_argument('--size_wd', type=int, default=64)
 parser.add_argument('--weight_decay', type=float, default=1e-7)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--modelname', type=str, default = '')
 parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
@@ -827,8 +844,12 @@ while True:
         max_words = words_padded.shape[2]
         hardcode_debugging = 1
         if hardcode_debugging:
-            max_words = num_words
-            words_padded = np.tile(np.arange(max_words), [max_turns, 1]).reshape(1, max_turns, max_words)
+            max_words = args.max_sentence_length_allowed - 1 
+            if 0:#Same sentence repeated
+                words_padded = np.tile(np.arange(max_words), [max_turns, 1]).reshape(1, max_turns, max_words)
+            else:#every sentence different:
+                max_words = args.max_sentence_length_allowed - 1 
+                words_padded = np.arange(max_words * max_turns).reshape(1, max_turns, max_words)
             speaker_padded[:] = 1
             sentence_lengths_padded[:] = max_words
         #batch, turns in a sample, words in a message
@@ -845,7 +866,7 @@ while True:
             }
         
         
-        if itr % 5 == 0:
+        if 0:#itr % 5 == 0:
             if itr % 2 == 0: 
                 act = np.sign
                 actname = 'sign'
@@ -934,7 +955,7 @@ while True:
                     itr
                     )
         else:
-            sess.run(model.optimizer, feed_dict)
+            _, loss = sess.run([model.optimizer, model.ppl_loss], feed_dict)
             '''
             def test_grads(val, mask, loss = model.ppl_loss):
                 return tf.reduce_sum([
@@ -952,8 +973,21 @@ while True:
         #    breakhere = 1
         if itr % 100 == 0:
             a = 2
+            
+            
             '''
-for _ in range(10):
+decoder_out_for_ppl, ctx_attn_shaped, ctx_attn_reduced, ctx_attn_norm, context_encs, ctx_wd_attn,\
+    ctx_final, wds_usrs, context_encs_second_rnn, ctx_enc_rar, thought_rec, ctx_for_rec, dec_relu = \
+    sess.run([
+        model.decoder_out_for_ppl, model.context_wd_Attention.attn_weights_shaped[0,:,:,:,:],
+        model.context_wd_Attention.attn_weights_reduced[0,:,:],
+        model.context_wd_Attention.attn_weights_normalization[0,:,:,:,:],
+        model.context_encs[0,:,:], model.ctx_wd_attn[0,:,:],
+        model.context_encs_final[0,:,:], model.wds_usrs[0,:,:,:], 
+        model.context_encs_second_rnn, model.context_enc_rar[0,:,:], 
+        model.thought_rec_reshaped[0,:,:],
+        model.ctx_for_rec, model.dec_relu_shaped], feed_dict)            
+for _ in range(100):
     sess.run(model.optimizer, feed_dict)
 
 dec_relu_shaped = sess.run(model.dec_relu_shaped, feed_dict)[0,:,:]
