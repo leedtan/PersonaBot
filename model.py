@@ -31,7 +31,7 @@ from adv import *
 #from test import test
 tf.reset_default_graph()
 
-def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.2):
+def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.3):
     return layers.dense(prev_layer, layer_size, name = name, reuse = reuse) * scale
 
 def MLP(x, hiddens, output_size, name, reuse = False):
@@ -146,7 +146,7 @@ class Attention():
     
         
     
-    
+rnn_scale = 2.0
 
 def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
     prev_layer = x
@@ -165,7 +165,7 @@ def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
             )
         prev_layer = lrelu(tf.concat(h, -1))
     output_layer = prev_layer[:,-1,:]
-    return output_layer, prev_layer
+    return output_layer*rnn_scale, prev_layer*rnn_scale
 
 def encode_context(x, num_layers, size, lengths, cells,initial_states, name='ctx'):
     prev_layer = x
@@ -182,7 +182,7 @@ def encode_context(x, num_layers, size, lengths, cells,initial_states, name='ctx
             scope=name + str(idx)
             )
         prev_layer = lrelu(prev_layer)
-    return prev_layer
+    return prev_layer*rnn_scale
 
 def decode(x, num_layers, size, lengths, cells,initial_states, name='dec'):
     prev_layer = x
@@ -199,7 +199,7 @@ def decode(x, num_layers, size, lengths, cells,initial_states, name='dec'):
             scope=name + str(idx)
             )
         prev_layer = lrelu(prev_layer)
-    return prev_layer
+    return prev_layer*rnn_scale
 
 def prepare_inputs(prev_layer, prev_layer_size, size, layers, bidirectional=False):
     
