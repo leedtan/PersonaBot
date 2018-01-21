@@ -45,10 +45,10 @@ def MLP(x, hiddens, output_size, name, reuse = False):
 
 def print_greedy_decode(words_padded, greedy_responses, greedy_values):
     words_padded_decode = words_padded[0,:,:]
-    greedy_responses = np.stack(greedy_responses,1)
-    greedy_values = np.stack(greedy_values,1)
+    #greedy_responses = np.stack(greedy_responses,1)
+    greedy_vals = np.stack(greedy_values,1)
     for i in range(greedy_responses.shape[0]-1):
-        end_idx = np.where(greedy_responses[i,:] == eos)
+        end_idx = np.where(words_padded_decode[i,:] == eos)
         printed = 0
         if len(end_idx) > 0:
             end_idx = end_idx[0]
@@ -56,10 +56,10 @@ def print_greedy_decode(words_padded, greedy_responses, greedy_values):
                 end_idx = end_idx[0]
                 if end_idx > 0:
                     speaker, _, words = dataset.translate_item(
-                            speaker_padded[0:1, i], None, words_padded_decode[i:i+1,:end_idx+1])
+                            speaker_padded[0:1, i], None, words_padded_decode[i:i+1,:])#end_idx+1])
                     print('Real:', speaker[0], ' '.join(words[0]))
                     printed = 1
-            if printed == 0 and words_padded_decode[i, 1].sum() > 0:
+            if printed == 0:# and words_padded_decode[i, 1].sum() > 0:
                 try:
                     speaker, _, words = dataset.translate_item(
                             speaker_padded[0:1, i], None, words_padded_decode[i:i+1,:])
@@ -91,8 +91,8 @@ def print_greedy_decode(words_padded, greedy_responses, greedy_values):
                     #If model has a bug, nans show up, somehow this crashes.
                     continue
             if words_padded_decode[i, 1].sum() == 0:
-                break
-    
+                continue
+
 def lrelu(x):
     return tf.maximum(x, .1*x)
 
@@ -163,7 +163,7 @@ def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
             time_major=False,
             scope='enc' + str(idx)
             )
-        prev_layer = lrelu(tf.concat(h, -1))
+        prev_layer = lrelu(tf.concat(h, -1))*rnn_scale
     output_layer = prev_layer[:,-1,:]
     return output_layer*rnn_scale, prev_layer*rnn_scale
 
@@ -181,7 +181,7 @@ def encode_context(x, num_layers, size, lengths, cells,initial_states, name='ctx
             time_major=False,
             scope=name + str(idx)
             )
-        prev_layer = lrelu(prev_layer)
+        prev_layer = lrelu(prev_layer)*rnn_scale
     return prev_layer*rnn_scale
 
 def decode(x, num_layers, size, lengths, cells,initial_states, name='dec'):
@@ -198,7 +198,7 @@ def decode(x, num_layers, size, lengths, cells,initial_states, name='dec'):
             time_major=False,
             scope=name + str(idx)
             )
-        prev_layer = lrelu(prev_layer)
+        prev_layer = lrelu(prev_layer)*rnn_scale
     return prev_layer*rnn_scale
 
 def prepare_inputs(prev_layer, prev_layer_size, size, layers, bidirectional=False):
@@ -503,7 +503,7 @@ class Model():
                 self.ppl_loss_masked = self.l2_loss = ((
                         -1*self.ppl_loss_raw * self.target_decode_l2) + 
                         (self.ppl_loss_raw * (1-self.target_decode_l2))/self.num_wds
-                        )* tf.expand_dims(self.mask_flat_decode, -1)*1e-2
+                        )* tf.expand_dims(self.mask_flat_decode, -1)
                 self.ppl_loss = tf.reduce_sum(tf.pow(
                         self.ppl_loss_masked, 1.0))/tf.reduce_sum(
                     self.mask_flat_decode)*1e5
@@ -647,7 +647,7 @@ parser.add_argument('--modelnamesave', type=str, default='')
 parser.add_argument('--modelnameload', type=str, default='')
 parser.add_argument('--loaditerations', type=int, default=0)
 parser.add_argument('--max_sentence_length_allowed', type=int, default=8)
-parser.add_argument('--max_turns_allowed', type=int, default=8)
+parser.add_argument('--max_turns_allowed', type=int, default=5)
 parser.add_argument('--num_loader_workers', type=int, default=4)
 parser.add_argument('--adversarial_sample', type=int, default=0)
 parser.add_argument('--emb_gpu_id', type=int, default=0)
@@ -857,7 +857,8 @@ while True:
             else:#every sentence different:
                 max_words = args.max_sentence_length_allowed
                 max_turns = args.max_turns_allowed
-                words_padded = np.arange(max_words * max_turns).reshape(1, max_turns, max_words)
+                abc = np.arange((max_words - 2) * max_turns).reshape(1, max_turns, max_words-2)
+                words_padded = np.concatenate((np.tile(start, [1,max_turns, 1]), abc, np.tile(eos, [1,max_turns, 1])),2)
             sentence_lengths_padded = np.ones((1,max_turns),dtype=np.int32)*max_words
             speaker_padded = np.ones((1,max_turns),dtype=np.int32)
         #batch, turns in a sample, words in a message
@@ -1011,7 +1012,7 @@ dec_relu_shaped[:,1]
             greedy_responses, greedy_values = sess.run(
                     [model.greedy_words, model.greedy_pre_argmax],
                     feed_dict = feed_dict)
-            print_greedy_decode(words_padded, greedy_responses, greedy_values)
-        
+            greedy = np.stack(greedy_responses).T
+            print_greedy_decode(words_padded[:,:,1:], greedy, greedy_values)
         if itr % 10 == 0:
             print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(np.min((10, tonumpy(loss)))))
