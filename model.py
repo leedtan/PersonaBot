@@ -220,7 +220,8 @@ class Model():
                  size_usr = 32, size_wd = 32,
                  size_enc=32, size_ctx=32, size_ctx_2=32, 
                  size_dec=32,size_dec_2=32,
-                 num_wds = 8192,num_usrs = 1000, weight_decay = 1e-3):
+                 num_wds = 8192,num_usrs = 1000, weight_decay = 1e-3,
+                 overuse_penalty = 1e-3, greedy_overuse_penalty = 1e-3):
         self.layers_enc = layers_enc
         self.layers_ctx = layers_ctx
         self.layers_dec = layers_dec
@@ -468,7 +469,7 @@ class Model():
         self.dec_avg = tf.reduce_sum(
                 self.dec_relu * tf.expand_dims(tf.reshape(
                         self.mask_expanded[:,1:,:], [-1]),-1), 0)/tf.reduce_sum(self.mask_decode)
-        self.overuse_penalty = tf.reduce_mean(tf.pow(self.dec_avg, 2))*1e-3
+        self.overuse_penalty = tf.reduce_mean(tf.pow(self.dec_avg, 2))*overuse_penalty
         self.dec_relu_shaped = tf.reshape(
                 self.dec_relu, [self.batch_size *  (self.max_conv_len-1), 
                                 self.max_sent_len, self.num_wds])[:,:-1,:]        
@@ -521,7 +522,8 @@ class Model():
                 max_length = args.max_sentence_length_allowed, start_token = dataset.index_word(START))
         
         self.greedy_pre_argmax_offset = tf.reduce_mean(tf.concat(self.greedy_pre_argmax, 0), 0)
-        self.greedy_overuse_penalty = tf.reduce_mean(tf.pow(self.greedy_pre_argmax_offset, 2))*1e-4
+        self.greedy_overuse_penalty = tf.reduce_mean(tf.pow(
+                self.greedy_pre_argmax_offset, 2))*greedy_overuse_penalty
         
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
@@ -531,7 +533,7 @@ class Model():
                 self.overuse_penalty + self.greedy_overuse_penalty * self.greedy_enabled)
         if 0: #DBG
             self.loss = self.ppl_loss
-        self.loss_adv = (self.ppl_loss + self.weight_norm + 
+        self.loss_adv = (self.ppl_loss + 
                 self.reconstruct_loss + self.thought_rec_loss + 
                 self.overuse_penalty)
         self.context_encs_final_adv = tf.gradients(self.loss_adv, self.context_encs_final)
@@ -646,7 +648,9 @@ parser.add_argument('--size_ctx_2', type=int, default=256)
 parser.add_argument('--size_dec_2', type=int, default=256)
 parser.add_argument('--size_usr', type=int, default=16)
 parser.add_argument('--size_wd', type=int, default=64)
-parser.add_argument('--weight_decay', type=float, default=1e-8)
+parser.add_argument('--weight_decay', type=float, default=1e-6)
+parser.add_argument('--overuse_penalty', type=float, default=1e-2)
+parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-2)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
@@ -772,6 +776,8 @@ layers_dec = args.layers_dec
 layers_ctx_2 = args.layers_ctx_2
 layers_dec_2 = args.layers_dec_2
 weight_decay = args.weight_decay
+overuse_penalty = args.overuse_penalty
+greedy_overuse_penalty = args.greedy_overuse_penalty
 
 model = Model(layers_enc=layers_enc, 
               layers_ctx=layers_ctx, layers_ctx_2=layers_ctx_2, 
@@ -780,7 +786,8 @@ model = Model(layers_enc=layers_enc,
               size_enc=size_enc, 
               size_ctx=size_ctx, size_ctx_2=size_ctx_2, 
               size_dec=size_dec,size_dec_2=size_dec_2,
-              num_wds = num_words+1,num_usrs = num_usrs+1, weight_decay = weight_decay)
+              num_wds = num_words+1,num_usrs = num_usrs+1, weight_decay = weight_decay,
+              overuse_penalty = overuse_penalty, greedy_overuse_penalty = greedy_overuse_penalty)
 
 def identity(x):
     return x
@@ -802,6 +809,11 @@ adv_ctx_scales = []
 baseline = None
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
+saver = tf.train.Saver()
+model_loc = 'model_tf.ckpt'
+if 1:
+    saver.restore(sess, model_loc)
+        
 if modelnameload:
     if len(modelnameload) > 0:
         pass
@@ -906,25 +918,28 @@ while True:
                 #Adv sample ctx outputs:
                 adv_tensors = [model.context_encs_final, model.dec_init_states, model.dec_init_states_2,
                            model.context_encs_final_adv, model.dec_init_adv, model.dec_init_2_adv]
-            _, loss_adv_pre, act1, act2, act3, grad1, grad2, grad3 = sess.run(
-                    [model.optimizer, model.loss_adv] + adv_tensors,feed_dict=feed_dict)
+            loss_adv_pre, act1, act2, act3, grad1, grad2, grad3 = sess.run(
+                    [model.loss_adv] + adv_tensors,feed_dict=feed_dict)
             #feed_dict[adv_tensors[0]] = \
             #    act1 +  act(grad1[0])*1e-2 * np.std(act1)/np.mean(np.square(act(grad1[idx])))
+            norm_bias = 1e-4
+            std_bias = 1e-4
+            adv_mult = 1e-3
             for idx in range(len(act2)):
                 #std = np.expand_dims(np.std(act(grad2[idx]),0)+1e-5, 0)
-                std = np.expand_dims(np.std(act2[idx],0),0)+1e-5
-                norm = np.sqrt(np.expand_dims(np.mean(np.square(act(grad2[idx])),0), 0)) + 1e-8
-                feed_dict[adv_tensors[1][idx]] = act2[idx] + act(grad2[idx]) * 1e-3 / norm / std
+                std = np.clip(np.expand_dims(np.std(act2[idx],0),0),std_bias, None)
+                norm = np.clip(np.sqrt(np.expand_dims(np.sum(np.square(act(grad2[idx])),0), 0)),norm_bias, None)
+                feed_dict[adv_tensors[1][idx]] = act2[idx] + act(grad2[idx]) * adv_mult / norm / std
             for idx in range(len(act3)):
                 old_feed_dict = feed_dict.copy()
                 #std = np.expand_dims(np.std(act(grad3[idx]),0)+1e-5, 0)
-                std = np.expand_dims(np.std(act3[idx],0),0)+1e-5
-                norm = np.sqrt(np.expand_dims(np.mean(np.square(act(grad3[idx])),0), 0)) + 1e-8
-                feed_dict[adv_tensors[2][idx]] = act3[idx] + act(grad3[idx]) * 1e-3 / norm / std
+                std = np.clip(np.expand_dims(np.std(act3[idx],0),0),std_bias, None)
+                norm = np.clip(np.sqrt(np.expand_dims(np.sum(np.square(act(grad3[idx])),0), 0)),norm_bias, None)
+                feed_dict[adv_tensors[2][idx]] = act3[idx] + act(grad3[idx]) * adv_mult / norm / std
             #std = np.expand_dims(np.std(act(grad1[0]),1)+1e-5, 1)
-            std = np.expand_dims(np.std(act1,1),1)+1e-5
-            norm = np.sqrt(np.expand_dims(np.mean(np.square(act(grad1[0])),1), 1)) + 1e-8
-            feed_dict[adv_tensors[0]] = act1 + act(grad1[0]) * 1e-3 / norm / std
+            std = np.clip(np.expand_dims(np.std(act1,1),1),std_bias, None)
+            norm = np.clip(np.sqrt(np.expand_dims(np.mean(np.square(act(grad1[0])),1), 1)),norm_bias, None)
+            feed_dict[adv_tensors[0]] = act1 + act(grad1[0]) * adv_mult / norm / std
             _, loss_adv_post = sess.run([model.optimizer, model.loss_adv], feed_dict)
             loss_adv_diff = loss_adv_post - loss_adv_pre
             if itr % 5 == 0:
@@ -1013,11 +1028,14 @@ dec_relu_shaped = sess.run(model.dec_relu_shaped, feed_dict)[0,:,:]
 dec_relu_shaped.argmax(1)
 dec_relu_shaped[:,1]
             '''
-        if itr % 30 == 0:
+        if itr % 100 == 0:
+            print('\nEpoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 
+                  'PPL', np.exp(np.min((10, tonumpy(loss)))), '\n')
+        if itr % 100 == 0:
             greedy_responses, greedy_values = sess.run(
                     [model.greedy_words, model.greedy_pre_argmax],
                     feed_dict = feed_dict)
             greedy = np.stack(greedy_responses).T
             print_greedy_decode(words_padded[:,:,1:], greedy, greedy_values)
-        if itr % 10 == 0:
-            print('Epoch', epoch, 'Iteration', itr, 'Loss', tonumpy(loss), 'PPL', np.exp(np.min((10, tonumpy(loss)))))
+        if itr % 1000 == 0:
+            saver.save(sess, model_loc)
