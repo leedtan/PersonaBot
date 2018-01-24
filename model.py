@@ -640,14 +640,14 @@ parser.add_argument('--layers_ctx', type=int, default=2)
 parser.add_argument('--layers_dec', type=int, default=2)
 parser.add_argument('--layers_ctx_2', type=int, default=2)
 parser.add_argument('--layers_dec_2', type=int, default=2)
-parser.add_argument('--size_enc', type=int, default=128)
+parser.add_argument('--size_enc', type=int, default=512)
 parser.add_argument('--size_attn', type=int, default=0)
-parser.add_argument('--size_ctx', type=int, default=256)
-parser.add_argument('--size_dec', type=int, default=256)
-parser.add_argument('--size_ctx_2', type=int, default=256)
-parser.add_argument('--size_dec_2', type=int, default=256)
-parser.add_argument('--size_usr', type=int, default=16)
-parser.add_argument('--size_wd', type=int, default=64)
+parser.add_argument('--size_ctx', type=int, default=512)
+parser.add_argument('--size_dec', type=int, default=512)
+parser.add_argument('--size_ctx_2', type=int, default=512)
+parser.add_argument('--size_dec_2', type=int, default=512)
+parser.add_argument('--size_usr', type=int, default=64)
+parser.add_argument('--size_wd', type=int, default=128)
 parser.add_argument('--weight_decay', type=float, default=1e-6)
 parser.add_argument('--overuse_penalty', type=float, default=1e-2)
 parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-2)
@@ -707,7 +707,9 @@ dataloader = round_robin_dataloader(dataloaders)
 
 try:
     os.mkdir(args.logdir)
+    print('SUCCESSFULLY LOADED MODEL')
 except:
+    print('STARTED NEW MODEL')
     pass
 latest_loaditer = 0
 if len(args.modelname) > 0:
@@ -812,7 +814,10 @@ sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 model_loc = 'model_tf.ckpt'
 if 1:
-    saver.restore(sess, model_loc)
+    try:
+        saver.restore(sess, model_loc)
+    except:
+        pass
         
 if modelnameload:
     if len(modelnameload) > 0:
