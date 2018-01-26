@@ -948,7 +948,8 @@ while True:
             feed_dict[adv_tensors[0]] = act1 + act(grad1[0]) * adv_mult / norm / std
             
             std = np.clip(np.expand_dims(np.expand_dims(np.std(act4.reshape(1,-1,size_wd+size_usr),1),1),1),std_bias, None)
-            norm = np.clip(np.sqrt(np.expand_dims(np.expand_dims(np.mean(np.square(act(grad4[0].reshape(1,-1,size_wd+size_usr))),1), 1),1),norm_bias, None)
+            norm = np.clip(np.sqrt(np.expand_dims(np.expand_dims(np.mean(np.square(act(
+                    grad4[0].reshape(1,-1,size_wd+size_usr))),1), 1),1)),norm_bias, None)
             feed_dict[adv_tensors[3]] = act4 + act(grad4[0]) * adv_mult / norm / std
             
             _, loss_adv_post = sess.run([model.optimizer, model.loss_adv], feed_dict)
