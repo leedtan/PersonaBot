@@ -23,7 +23,9 @@ from PIL import Image
 
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
+
 np.set_printoptions(suppress=True)
+np.set_printoptions(threshold=np.nan)
 from collections import Counter
 from data_loader_stage1 import *
 
@@ -146,7 +148,7 @@ class Attention():
     
         
     
-rnn_scale = 2.0
+rnn_scale = 1.2
 
 def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
     prev_layer = x
@@ -814,7 +816,7 @@ sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 model_loc = 'model_tf.ckpt'
-if 1:
+if 0:
     try:
         saver.restore(sess, model_loc)
     except:
@@ -947,7 +949,8 @@ while True:
             norm = np.clip(np.sqrt(np.expand_dims(np.mean(np.square(act(grad1[0])),1), 1)),norm_bias, None)
             feed_dict[adv_tensors[0]] = act1 + act(grad1[0]) * adv_mult / norm / std
             
-            std = np.clip(np.expand_dims(np.expand_dims(np.std(act4.reshape(1,-1,size_wd+size_usr),1),1),1),std_bias, None)
+            std = np.clip(np.expand_dims(np.expand_dims(np.std(
+                    act4.reshape(1,-1,size_wd+size_usr),1),1),1),std_bias, None)
             norm = np.clip(np.sqrt(np.expand_dims(np.expand_dims(np.mean(np.square(act(
                     grad4[0].reshape(1,-1,size_wd+size_usr))),1), 1),1)),norm_bias, None)
             feed_dict[adv_tensors[3]] = act4 + act(grad4[0]) * adv_mult / norm / std
@@ -1022,7 +1025,8 @@ while True:
             
             '''
 decoder_out_for_ppl, ctx_attn_shaped, ctx_attn_reduced, ctx_attn_norm, context_encs, ctx_wd_attn,\
-    ctx_final, wds_usrs, context_encs_second_rnn, ctx_enc_rar, thought_rec, ctx_for_rec, dec_relu = \
+    ctx_final, wds_usrs, context_encs_second_rnn, ctx_enc_rar, thought_rec, ctx_for_rec, dec_relu,\
+    model.decoder_out, model.dec_inputs, model.reconstruct = \
     sess.run([
         model.decoder_out_for_ppl, model.context_wd_Attention.attn_weights_shaped[0,:,:,:,:],
         model.context_wd_Attention.attn_weights_reduced[0,:,:],
@@ -1031,7 +1035,8 @@ decoder_out_for_ppl, ctx_attn_shaped, ctx_attn_reduced, ctx_attn_norm, context_e
         model.context_encs_final[0,:,:], model.wds_usrs[0,:,:,:], 
         model.context_encs_second_rnn, model.context_enc_rar[0,:,:], 
         model.thought_rec_reshaped[0,:,:],
-        model.ctx_for_rec, model.dec_relu_shaped], feed_dict)            
+        model.ctx_for_rec, model.dec_relu_shaped,
+        model.decoder_out, model.dec_inputs, model.reconstruct], feed_dict)            
 for _ in range(100):
     sess.run(model.optimizer, feed_dict)
 
