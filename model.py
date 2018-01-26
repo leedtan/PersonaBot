@@ -539,6 +539,7 @@ class Model():
         self.context_encs_final_adv = tf.gradients(self.loss_adv, self.context_encs_final)
         self.dec_init_adv = tf.gradients(self.loss_adv, self.dec_init_states)
         self.dec_init_2_adv = tf.gradients(self.loss_adv, self.dec_init_states_2)
+        self.wds_usrs_adv = tf.gradients(self.loss_adv, self.wds_usrs)
         
         if 1:
             gvs = optimizer.compute_gradients(self.weight_norm)
@@ -921,15 +922,15 @@ while True:
                         model.greedy_enabled: 0.
                         }
                 #Adv sample ctx outputs:
-                adv_tensors = [model.context_encs_final, model.dec_init_states, model.dec_init_states_2,
-                           model.context_encs_final_adv, model.dec_init_adv, model.dec_init_2_adv]
-            loss_adv_pre, act1, act2, act3, grad1, grad2, grad3 = sess.run(
+                adv_tensors = [model.context_encs_final, model.dec_init_states, model.dec_init_states_2,model.wds_usrs,
+                           model.context_encs_final_adv, model.dec_init_adv, model.dec_init_2_adv, model.wds_usrs_adv]
+            loss_adv_pre, act1, act2, act3, act4, grad1, grad2, grad3, grad4 = sess.run(
                     [model.loss_adv] + adv_tensors,feed_dict=feed_dict)
             #feed_dict[adv_tensors[0]] = \
             #    act1 +  act(grad1[0])*1e-2 * np.std(act1)/np.mean(np.square(act(grad1[idx])))
             norm_bias = 1e-4
             std_bias = 1e-4
-            adv_mult = 1e-3
+            adv_mult = 1e-4
             for idx in range(len(act2)):
                 #std = np.expand_dims(np.std(act(grad2[idx]),0)+1e-5, 0)
                 std = np.clip(np.expand_dims(np.std(act2[idx],0),0),std_bias, None)
@@ -945,6 +946,11 @@ while True:
             std = np.clip(np.expand_dims(np.std(act1,1),1),std_bias, None)
             norm = np.clip(np.sqrt(np.expand_dims(np.mean(np.square(act(grad1[0])),1), 1)),norm_bias, None)
             feed_dict[adv_tensors[0]] = act1 + act(grad1[0]) * adv_mult / norm / std
+            
+            std = np.clip(np.expand_dims(np.expand_dims(np.std(act4.reshape(1,-1,size_wd+size_usr),1),1),1),std_bias, None)
+            norm = np.clip(np.sqrt(np.expand_dims(np.expand_dims(np.mean(np.square(act(grad4[0].reshape(1,-1,size_wd+size_usr))),1), 1),1),norm_bias, None)
+            feed_dict[adv_tensors[3]] = act4 + act(grad4[0]) * adv_mult / norm / std
+            
             _, loss_adv_post = sess.run([model.optimizer, model.loss_adv], feed_dict)
             loss_adv_diff = loss_adv_post - loss_adv_pre
             if itr % 5 == 0:
