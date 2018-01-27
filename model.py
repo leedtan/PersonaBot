@@ -670,7 +670,7 @@ parser.add_argument('--size_wd', type=int, default=128)
 parser.add_argument('--weight_decay', type=float, default=1e-6)
 parser.add_argument('--overuse_penalty', type=float, default=1e-2)
 parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-2)
-parser.add_argument('--confidence_penalty', type=float, default=1e-6)
+parser.add_argument('--confidence_penalty', type=float, default=1e-7)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
@@ -989,9 +989,6 @@ while True:
                         itr
                         )
         
-            gvs = optimizer.compute_gradients(self.confidence_penalty_greedy)
-            self.grad_norm_confidence_penalty_greedy = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
-                for grad, var in gvs if grad is not None])
         elif itr % 3 == 0:
             feed_dict[model.greedy_enabled] = 1.
             _, loss, weight_norm, rec_loss_wd, rec_loss_thought, overuse_penalty, confidence_penalty,grad_norm_confidence, \
