@@ -362,7 +362,7 @@ class Model():
         
         self.thought_rec_loss = tf.reduce_sum(tf.square(
             tf.stop_gradient(self.sentence_encs_shaped[:,1:,:]) - self.thought_rec_reshaped[:,:-1,:]) * \
-                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 1e-3
+                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 1e-2
         
         
         self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2 + self.size_enc
@@ -431,7 +431,7 @@ class Model():
             self.reconstruct_loss = tf.reduce_sum(tf.square(
                     self.reconstruct_for_penalty - self.wd_emb_for_reconstruct) * 
                     tf.tile(tf.expand_dims(self.mask_decode,-1), [1, 1, 1, self.size_wd])) / tf.reduce_sum(
-                            self.mask_decode) * 1e-4
+                            self.mask_decode) * 1e-3
             self.reconstruct_shaped = tf.reshape(
                     self.reconstruct,
                     (self.batch_size*self.max_conv_len,self.max_sent_len,self.size_wd))
@@ -475,71 +475,43 @@ class Model():
         self.confidence_norm = tf.reduce_sum(
                 tf.pow(self.dec_relu,2) * tf.expand_dims(tf.reshape(
                         self.mask_expanded[:,1:,:], [-1]),-1))/tf.reduce_sum(self.mask_decode)
-        self.confidence_penalty = self.confidence_norm * confidence_penalty
+        self.confidence_penalty = self.confidence_norm * confidence_penalty * 1e1
         
-        self.overuse_penalty = tf.reduce_mean(tf.pow(self.dec_avg, 2))*overuse_penalty
+        self.overuse_penalty = tf.reduce_sum(tf.pow(self.dec_avg, 2))*overuse_penalty
         self.dec_relu_shaped = tf.reshape(
                 self.dec_relu, [self.batch_size *  (self.max_conv_len-1), 
-                                self.max_sent_len, self.num_wds])[:,:-1,:]        
-        #self.labels = tf.one_hot(indices = self.target_flat, depth = self.num_wds)
-        if 1:
-            self.ppl_loss_masked = tf.contrib.seq2seq.sequence_loss(
-                logits = self.dec_relu_shaped,
-                targets = self.target_decode,
-                weights = self.mask_flat_decode,
-                average_across_timesteps=False,
-                average_across_batch=False,
-                softmax_loss_function=None,
-                name=None
-            )
-            #tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.6),
-            self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
-                    tf.pow(self.ppl_loss_masked, 1.0),
-                    1), 0)/tf.reduce_sum(self.mask_flat_decode)
-            '''
-            self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
-                    tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.5),
-                    1), 0)/tf.reduce_sum(self.mask_flat_decode) * 0.5
-            '''
-        else:
-            self.target_decode_l2 = tf.cast(tf.one_hot(
-                indices = self.target_decode,
-                depth = self.num_wds,
-                on_value=1,
-                off_value=0,
-                axis=None,
-                dtype=None,
-                name=None
-            ), tf.float32)
-            
-            self.dec_exp = tf.exp(self.dec_relu_shaped/1000)
-            self.ppl_loss_raw = self.dec_exp / tf.expand_dims(tf.reduce_sum(self.dec_exp, 2), -1)
-            if 1:
-                self.ppl_loss_masked = self.l2_loss = ((
-                        -1*self.ppl_loss_raw * self.target_decode_l2) + 
-                        (self.ppl_loss_raw * (1-self.target_decode_l2))/self.num_wds
-                        )* tf.expand_dims(self.mask_flat_decode, -1)
-                self.ppl_loss = tf.reduce_sum(tf.pow(
-                        self.ppl_loss_masked, 1.0))/tf.reduce_sum(
-                    self.mask_flat_decode)*1e3
-            else:
-                self.ppl_loss_masked = self.l2_loss = ((
-                        -1*self.ppl_loss_raw * self.target_decode_l2) + 
-                        (self.ppl_loss_raw * (1-self.target_decode_l2))/self.num_wds
-                        )* tf.expand_dims(self.mask_flat_decode, -1)*1e-2
-                self.ppl_loss = tf.reduce_sum(tf.pow(tf.abs(
-                        self.ppl_loss_masked),1.2)*tf.sign(self.ppl_loss_masked))/tf.reduce_sum(
-                    self.mask_flat_decode)
+                                self.max_sent_len, self.num_wds])[:,:-1,:]   
+        self.ppl_loss_masked = tf.contrib.seq2seq.sequence_loss(
+            logits = self.dec_relu_shaped,
+            targets = self.target_decode,
+            weights = self.mask_flat_decode,
+            average_across_timesteps=False,
+            average_across_batch=False,
+            softmax_loss_function=None,
+            name=None
+        )
+        #tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.6),
+        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
+                tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.5),
+                1), 0)/tf.reduce_sum(self.mask_flat_decode) * 0.3
+        '''
+        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
+                tf.pow(self.ppl_loss_masked, 1.0),
+                1), 0)/tf.reduce_sum(self.mask_flat_decode)
+        self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
+                tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.5),
+                1), 0)/tf.reduce_sum(self.mask_flat_decode) * 0.5
+        '''
                 
         self.greedy_words, self.greedy_pre_argmax = self.decode_greedy(num_layers=layers_dec, 
                 max_length = args.max_sentence_length_allowed, start_token = dataset.index_word(START))
         
-        self.greedy_pre_argmax_offset = tf.reduce_mean(tf.concat(self.greedy_pre_argmax, 0), 0)
-        self.greedy_overuse_penalty = tf.reduce_mean(tf.pow(
-                self.greedy_pre_argmax_offset, 2))*greedy_overuse_penalty
+        self.greedy_pre_argmax_offset = tf.reduce_sum(tf.concat(self.greedy_pre_argmax, 0), 0)
+        self.greedy_overuse_penalty = tf.reduce_sum(tf.pow(
+                tf.abs(self.greedy_pre_argmax_offset), 1.2))*greedy_overuse_penalty
                 
-        self.confidence_norm_greedy = tf.reduce_mean(tf.pow(tf.concat(self.greedy_pre_argmax, 0),2))
-        self.confidence_penalty_greedy = self.confidence_norm_greedy * confidence_penalty
+        self.confidence_norm_greedy = tf.reduce_sum(tf.pow(tf.concat(self.greedy_pre_argmax, 0),2))
+        self.confidence_penalty_greedy = self.confidence_norm_greedy * confidence_penalty * 1e-1
         
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.tfvars = tf.trainable_variables()
@@ -560,31 +532,31 @@ class Model():
         
         if 1:
             gvs = optimizer.compute_gradients(self.weight_norm)
-            self.grad_norm_weight = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_weight = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.ppl_loss)
-            self.grad_norm_ppl = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_ppl = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.reconstruct_loss)
-            self.grad_norm_rec_wd = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_rec_wd = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.thought_rec_loss)
-            self.grad_norm_rec_thought = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_rec_thought = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.confidence_penalty)
-            self.grad_norm_confidence = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_confidence = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.confidence_penalty_greedy)
-            self.grad_norm_confidence_penalty_greedy = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_confidence_penalty_greedy = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.overuse_penalty)
-            self.grad_norm_overuse = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_overuse = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.greedy_overuse_penalty * self.greedy_enabled)
-            self.grad_norm_overuse_greedy = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+            self.grad_norm_overuse_greedy = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
         gvs = optimizer.compute_gradients(self.loss)
-        self.grad_norm_total = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
+        self.grad_norm_total = tf.reduce_sum([tf.reduce_sum(tf.square(grad)) for grad, var in gvs if grad is not None])
         clip_norm = .1
         clip_single = .01
         capped_gvs = [(tf.clip_by_value(grad, -1*clip_single,clip_single), var)
@@ -673,8 +645,8 @@ parser.add_argument('--size_dec_2', type=int, default=512)
 parser.add_argument('--size_usr', type=int, default=64)
 parser.add_argument('--size_wd', type=int, default=128)
 parser.add_argument('--weight_decay', type=float, default=1e-6)
-parser.add_argument('--overuse_penalty', type=float, default=1e-2)
-parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-2)
+parser.add_argument('--overuse_penalty', type=float, default=1e-5)
+parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-8)
 parser.add_argument('--confidence_penalty', type=float, default=1e-7)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
@@ -1055,9 +1027,34 @@ while True:
             
             
             '''
+wds_usrs, sentence_encs, context_encs, ctx_wd_attn, context_encs_second_rnn, ctx_enc_rar, ctx_final, \
+    ctx_attn_shaped, ctx_attn_reduced, ctx_attn_norm, ctx_for_rec, \
+    thought_rec, reconstruct, dec_inputs, decoder_out, decoder_out_for_ppl, dec_relu, = \
+    sess.run([
+        model.wds_usrs[0,:,:,:], model.sentence_encs, model.context_encs[0,:,:], model.ctx_wd_attn[0,:,:],
+        model.context_encs_second_rnn,model.context_enc_rar[0,:,:], model.context_encs_final[0,:,:],
+        model.context_wd_Attention.attn_weights_shaped[0,:,:,:,:],
+        model.context_wd_Attention.attn_weights_reduced[0,:,:],
+        model.context_wd_Attention.attn_weights_normalization[0,:,:,:,:],
+        model.ctx_for_rec, model.thought_rec_reshaped[0,:,:],
+        model.reconstruct, model.dec_inputs, model.decoder_out, model.decoder_out_for_ppl,
+        model.dec_relu_shaped
+    ], feed_dict)
+plt.plot(np.square(decoder_out_for_ppl).mean(0))
+plt.plot(np.convolve(np.square(decoder_out_for_ppl).mean(0), np.ones(20)/20,mode='valid'))
+plt.plot(np.square(wds_usrs).reshape((-1,wds_usrs.shape[-1])).mean(0))
+plt.plot(np.square(decoder_out).reshape((-1,decoder_out.shape[-1])).mean(0))
+plt.plot(np.square(dec_inputs).reshape((-1,dec_inputs.shape[-1])).mean(0))
+plt.plot(np.square(reconstruct).reshape((-1,reconstruct.shape[-1])).mean(0))
+dec_relu_shaped = sess.run(model.dec_relu_shaped, feed_dict)[0,:,:]
+            
+            
+            
+            
+            
 decoder_out_for_ppl, ctx_attn_shaped, ctx_attn_reduced, ctx_attn_norm, context_encs, ctx_wd_attn,\
     ctx_final, wds_usrs, context_encs_second_rnn, ctx_enc_rar, thought_rec, ctx_for_rec, dec_relu,\
-    model.decoder_out, model.dec_inputs, model.reconstruct = \
+    decoder_out, dec_inputs, reconstruct, sentence_encs = \
     sess.run([
         model.decoder_out_for_ppl, model.context_wd_Attention.attn_weights_shaped[0,:,:,:,:],
         model.context_wd_Attention.attn_weights_reduced[0,:,:],
@@ -1067,11 +1064,12 @@ decoder_out_for_ppl, ctx_attn_shaped, ctx_attn_reduced, ctx_attn_norm, context_e
         model.context_encs_second_rnn, model.context_enc_rar[0,:,:], 
         model.thought_rec_reshaped[0,:,:],
         model.ctx_for_rec, model.dec_relu_shaped,
-        model.decoder_out, model.dec_inputs, model.reconstruct], feed_dict)            
+        model.decoder_out, model.dec_inputs, model.reconstruct, model.sentence_encs], feed_dict)   
+
+
+
 for _ in range(100):
     sess.run(model.optimizer, feed_dict)
-
-dec_relu_shaped = sess.run(model.dec_relu_shaped, feed_dict)[0,:,:]
 
 dec_relu_shaped.argmax(1)
 dec_relu_shaped[:,1]
