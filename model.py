@@ -33,7 +33,7 @@ from adv import *
 #from test import test
 tf.reset_default_graph()
 
-def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.3):
+def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.0:
     return layers.dense(prev_layer, layer_size, name = name, reuse = reuse) * scale
 
 def MLP(x, hiddens, output_size, name, reuse = False):
@@ -148,7 +148,7 @@ class Attention():
     
         
     
-rnn_scale = 1.2
+rnn_scale = 1.0
 
 def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
     prev_layer = x
