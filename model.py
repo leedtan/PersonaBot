@@ -33,7 +33,7 @@ from adv import *
 #from test import test
 tf.reset_default_graph()
 
-def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.0:
+def scaled_dense(prev_layer, layer_size, name=None, reuse = False, scale = 1.3):
     return layers.dense(prev_layer, layer_size, name = name, reuse = reuse) * scale
 
 def MLP(x, hiddens, output_size, name, reuse = False):
@@ -148,7 +148,7 @@ class Attention():
     
         
     
-rnn_scale = 1.0
+rnn_scale = 1.2
 
 def encode_sentence(x, num_layers, size, lengths, cells, initial_states):
     prev_layer = x
@@ -223,7 +223,8 @@ class Model():
                  size_enc=32, size_ctx=32, size_ctx_2=32, 
                  size_dec=32,size_dec_2=32,
                  num_wds = 8192,num_usrs = 1000, weight_decay = 1e-3,
-                 overuse_penalty = 1e-3, greedy_overuse_penalty = 1e-3):
+                 overuse_penalty = 1e-3, greedy_overuse_penalty = 1e-3,
+                 confidence_penalty = 1e-6):
         self.layers_enc = layers_enc
         self.layers_ctx = layers_ctx
         self.layers_dec = layers_dec
@@ -471,6 +472,10 @@ class Model():
         self.dec_avg = tf.reduce_sum(
                 self.dec_relu * tf.expand_dims(tf.reshape(
                         self.mask_expanded[:,1:,:], [-1]),-1), 0)/tf.reduce_sum(self.mask_decode)
+        self.dec_norm = tf.reduce_sum(
+                tf.pow(self.dec_relu,2) * tf.expand_dims(tf.reshape(
+                        self.mask_expanded[:,1:,:], [-1]),-1))/tf.reduce_sum(self.mask_decode)
+        self.confidence_penalty = self.dec_norm * confidence_penalty
         self.overuse_penalty = tf.reduce_mean(tf.pow(self.dec_avg, 2))*overuse_penalty
         self.dec_relu_shaped = tf.reshape(
                 self.dec_relu, [self.batch_size *  (self.max_conv_len-1), 
@@ -555,6 +560,9 @@ class Model():
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.thought_rec_loss)
             self.grad_norm_rec_thought = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
+                for grad, var in gvs if grad is not None])
+            gvs = optimizer.compute_gradients(self.confidence_penalty)
+            self.grad_norm_confidence = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
                 for grad, var in gvs if grad is not None])
             gvs = optimizer.compute_gradients(self.overuse_penalty)
             self.grad_norm_overuse = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) 
@@ -654,6 +662,7 @@ parser.add_argument('--size_wd', type=int, default=128)
 parser.add_argument('--weight_decay', type=float, default=1e-6)
 parser.add_argument('--overuse_penalty', type=float, default=1e-2)
 parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-2)
+parser.add_argument('--confidence_penalty', type=float, default=1e-6)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
 parser.add_argument('--lr', type=float, default=1e-4)
@@ -782,6 +791,7 @@ layers_ctx_2 = args.layers_ctx_2
 layers_dec_2 = args.layers_dec_2
 weight_decay = args.weight_decay
 overuse_penalty = args.overuse_penalty
+confidence_penalty = args.confidence_penalty
 greedy_overuse_penalty = args.greedy_overuse_penalty
 
 model = Model(layers_enc=layers_enc, 
@@ -792,7 +802,8 @@ model = Model(layers_enc=layers_enc,
               size_ctx=size_ctx, size_ctx_2=size_ctx_2, 
               size_dec=size_dec,size_dec_2=size_dec_2,
               num_wds = num_words+1,num_usrs = num_usrs+1, weight_decay = weight_decay,
-              overuse_penalty = overuse_penalty, greedy_overuse_penalty = greedy_overuse_penalty)
+              overuse_penalty = overuse_penalty, greedy_overuse_penalty = greedy_overuse_penalty,
+              confidence_penalty = confidence_penalty)
 
 def identity(x):
     return x
@@ -816,7 +827,7 @@ sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 model_loc = 'model_tf.ckpt'
-if 0:
+if 1:
     try:
         saver.restore(sess, model_loc)
     except:
@@ -972,11 +983,11 @@ while True:
         
         elif itr % 3 == 0:
             feed_dict[model.greedy_enabled] = 1.
-            _, loss, weight_norm, rec_loss_wd, rec_loss_thought, overuse_penalty, \
+            _, loss, weight_norm, rec_loss_wd, rec_loss_thought, overuse_penalty, confidence_penalty,grad_norm_confidence,\
                 grad_norm_ppl, grad_norm_rec_wd, grad_norm_rec_thought, grad_norm_overuse, grad_norm_total, \
                 grad_norm_overuse_greedy, greedy_overuse_penalty, grad_norm_weight =  sess.run(
                     [model.optimizer,model.ppl_loss, model.weight_norm, model.reconstruct_loss, model.thought_rec_loss,
-                     model.overuse_penalty,
+                     model.overuse_penalty,model.confidence_penalty,model.grad_norm_confidence,
                      model.grad_norm_ppl, model.grad_norm_rec_wd, model.grad_norm_rec_thought, 
                      model.grad_norm_overuse,model.grad_norm_total,
                      model.grad_norm_overuse_greedy, model.greedy_overuse_penalty, model.grad_norm_weight],
@@ -991,11 +1002,13 @@ while True:
                             tf.Summary.Value(tag='rec_loss_wd', simple_value=rec_loss_wd),
                             tf.Summary.Value(tag='rec_loss_thought', simple_value=rec_loss_thought),
                             tf.Summary.Value(tag='overuse_penalty', simple_value=overuse_penalty),
+                            tf.Summary.Value(tag='confidence_penalty', simple_value=confidence_penalty),
                             tf.Summary.Value(tag='greedy_overuse_penalty', simple_value=greedy_overuse_penalty),
                             tf.Summary.Value(tag='grad_norm_ppl', simple_value=grad_norm_ppl),
                             tf.Summary.Value(tag='grad_norm_rec_wd', simple_value=grad_norm_rec_wd),
                             tf.Summary.Value(tag='grad_norm_rec_thought', simple_value=grad_norm_rec_thought),
                             tf.Summary.Value(tag='grad_norm_overuse', simple_value=grad_norm_overuse),
+                            tf.Summary.Value(tag='grad_norm_confidence', simple_value=grad_norm_confidence),
                             tf.Summary.Value(tag='grad_norm_overuse_greedy', simple_value=grad_norm_overuse_greedy),
                             tf.Summary.Value(tag='grad_norm_total', simple_value=grad_norm_total),
                             ]
