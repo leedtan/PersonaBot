@@ -816,7 +816,7 @@ sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 model_loc = 'model_tf.ckpt'
-if 1:
+if 0:
     try:
         saver.restore(sess, model_loc)
     except:
