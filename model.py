@@ -494,8 +494,13 @@ class Model():
             )
             #tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.6),
             self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
+                    tf.pow(self.ppl_loss_masked, 1.0),
+                    1), 0)/tf.reduce_sum(self.mask_flat_decode)
+            '''
+            self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
                     tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.5),
-                    1), 0)/tf.reduce_sum(self.mask_flat_decode) * .5
+                    1), 0)/tf.reduce_sum(self.mask_flat_decode) * 0.5
+            '''
         else:
             self.target_decode_l2 = tf.cast(tf.one_hot(
                 indices = self.target_decode,
@@ -580,7 +585,7 @@ class Model():
                 for grad, var in gvs if grad is not None])
         gvs = optimizer.compute_gradients(self.loss)
         self.grad_norm_total = tf.reduce_mean([tf.reduce_mean(tf.square(grad)) for grad, var in gvs if grad is not None])
-        clip_norm = 1
+        clip_norm = .1
         clip_single = .01
         capped_gvs = [(tf.clip_by_value(grad, -1*clip_single,clip_single), var)
                       for grad, var in gvs if grad is not None]
