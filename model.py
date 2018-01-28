@@ -362,7 +362,7 @@ class Model():
         
         self.thought_rec_loss = tf.reduce_sum(tf.square(
             tf.stop_gradient(self.sentence_encs_shaped[:,1:,:]) - self.thought_rec_reshaped[:,:-1,:]) * \
-                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 1e-2
+                tf.expand_dims(self.mask_ctx_expanded[:,1:],-1)) / tf.reduce_sum(self.mask_ctx_expanded[:,1:]) * 3e-2
         
         
         self.size_ctx_final = self.size_ctx + self.size_enc + self.size_ctx_2 + self.size_enc
@@ -431,7 +431,7 @@ class Model():
             self.reconstruct_loss = tf.reduce_sum(tf.square(
                     self.reconstruct_for_penalty - self.wd_emb_for_reconstruct) * 
                     tf.tile(tf.expand_dims(self.mask_decode,-1), [1, 1, 1, self.size_wd])) / tf.reduce_sum(
-                            self.mask_decode) * 1e-3
+                            self.mask_decode) * 3e-3
             self.reconstruct_shaped = tf.reshape(
                     self.reconstruct,
                     (self.batch_size*self.max_conv_len,self.max_sent_len,self.size_wd))
@@ -493,7 +493,7 @@ class Model():
         #tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.6),
         self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
                 tf.pow(self.ppl_loss_masked, 1.0) + tf.pow(self.ppl_loss_masked, 1.5),
-                1), 0)/tf.reduce_sum(self.mask_flat_decode) * 0.3
+                1), 0)/tf.reduce_sum(self.mask_flat_decode) * 0.1
         '''
         self.ppl_loss = tf.reduce_sum(tf.reduce_sum(
                 tf.pow(self.ppl_loss_masked, 1.0),
@@ -644,9 +644,9 @@ parser.add_argument('--size_ctx_2', type=int, default=512)
 parser.add_argument('--size_dec_2', type=int, default=512)
 parser.add_argument('--size_usr', type=int, default=64)
 parser.add_argument('--size_wd', type=int, default=128)
-parser.add_argument('--weight_decay', type=float, default=1e-6)
-parser.add_argument('--overuse_penalty', type=float, default=1e-5)
-parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-8)
+parser.add_argument('--weight_decay', type=float, default=1e-5)
+parser.add_argument('--overuse_penalty', type=float, default=3e-4)
+parser.add_argument('--greedy_overuse_penalty', type=float, default=1e-7)
 parser.add_argument('--confidence_penalty', type=float, default=1e-7)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--gradclip', type=float, default=1)
@@ -812,7 +812,7 @@ sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 model_loc = 'model_tf.ckpt'
-if 0:
+if 1:
     try:
         saver.restore(sess, model_loc)
     except:
