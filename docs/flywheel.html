@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Flywheel Diagram</title>
+  <script src="https://unpkg.com/cytoscape@3.24.0/dist/cytoscape.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-family: sans-serif;
+    }
+    h1 {
+      margin-top: 20px;
+    }
+    #cy {
+      width: 800px;
+      height: 800px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>A/B Testing Flywheel</h1>
+  <div id="cy"></div>
+  <script>
+    const steps = [
+      "Running more A/B tests",
+      "Measuring value to decision making",
+      "Increasing interest in A/B testing",
+      "Investing in infrastructure",
+      "Lowering human cost"
+    ];
+
+    const nodes = steps.map((label, i) => ({
+      data: { id: `n${i}`, label }
+    }));
+
+    const edges = steps.map((_, i) => ({
+      data: {
+        source: `n${i}`,
+        target: `n${(i + 1) % steps.length}`
+      }
+    }));
+
+    cytoscape({
+      container: document.getElementById('cy'),
+      elements: [...nodes, ...edges],
+      layout: { name: 'circle' },
+      style: [
+        {
+          selector: 'node',
+          style: {
+            'label': 'data(label)',
+            'text-wrap': 'wrap',
+            'text-max-width': 100,
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'background-color': '#90ee90',
+            'width': 100,
+            'height': 100,
+            'font-size': '12px',
+            'color': '#000'
+          }
+        },
+        {
+          selector: 'edge',
+          style: {
+            'width': 2,
+            'target-arrow-shape': 'triangle',
+            'curve-style': 'bezier',
+            'line-color': '#444',
+            'target-arrow-color': '#444'
+          }
+        }
+      ]
+    });
+  </script>
+</body>
+</html>
